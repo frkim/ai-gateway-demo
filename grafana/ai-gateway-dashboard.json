@@ -1,0 +1,222 @@
+{
+  "annotations": { "list": [] },
+  "editable": true,
+  "graphTooltip": 1,
+  "time": { "from": "now-6h", "to": "now" },
+  "timezone": "",
+  "title": "AI Gateway — Usage & Governance",
+  "uid": "ai-gateway-usage",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "5m",
+  "templating": {
+    "list": [
+      {
+        "name": "dsAzureMonitor",
+        "label": "Azure Monitor",
+        "type": "datasource",
+        "query": "grafana-azure-monitor-datasource",
+        "current": {},
+        "hide": 0
+      }
+    ]
+  },
+  "panels": [
+    {
+      "type": "stat",
+      "title": "Total gateway queries",
+      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 0 },
+      "datasource": { "type": "grafana-azure-monitor-datasource", "uid": "${dsAzureMonitor}" },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value", "graphMode": "area" },
+      "targets": [
+        {
+          "refId": "A",
+          "queryType": "Azure Log Analytics",
+          "azureLogAnalytics": {
+            "resources": ["__WORKSPACE_RESOURCE_ID__"],
+            "query": "AppRequests | where $__timeFilter(TimeGenerated) | where Name has \"/chat/completions\" and Name startswith \"POST\" | summarize Queries = count()",
+            "resultFormat": "table"
+          }
+        }
+      ]
+    },
+    {
+      "type": "stat",
+      "title": "Total tokens",
+      "gridPos": { "h": 4, "w": 6, "x": 6, "y": 0 },
+      "datasource": { "type": "grafana-azure-monitor-datasource", "uid": "${dsAzureMonitor}" },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value", "graphMode": "area" },
+      "targets": [
+        {
+          "refId": "A",
+          "queryType": "Azure Log Analytics",
+          "azureLogAnalytics": {
+            "resources": ["__WORKSPACE_RESOURCE_ID__"],
+            "query": "AppTraces | where $__timeFilter(TimeGenerated) | where tostring(Properties.event) == \"AIUsage\" | summarize Tokens = sum(toint(Properties.totalTokens))",
+            "resultFormat": "table"
+          }
+        }
+      ]
+    },
+    {
+      "type": "stat",
+      "title": "Prompt tokens",
+      "gridPos": { "h": 4, "w": 6, "x": 12, "y": 0 },
+      "datasource": { "type": "grafana-azure-monitor-datasource", "uid": "${dsAzureMonitor}" },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value" },
+      "targets": [
+        {
+          "refId": "A",
+          "queryType": "Azure Log Analytics",
+          "azureLogAnalytics": {
+            "resources": ["__WORKSPACE_RESOURCE_ID__"],
+            "query": "AppTraces | where $__timeFilter(TimeGenerated) | where tostring(Properties.event) == \"AIUsage\" | summarize Prompt = sum(toint(Properties.promptTokens))",
+            "resultFormat": "table"
+          }
+        }
+      ]
+    },
+    {
+      "type": "stat",
+      "title": "Completion tokens",
+      "gridPos": { "h": 4, "w": 6, "x": 18, "y": 0 },
+      "datasource": { "type": "grafana-azure-monitor-datasource", "uid": "${dsAzureMonitor}" },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value" },
+      "targets": [
+        {
+          "refId": "A",
+          "queryType": "Azure Log Analytics",
+          "azureLogAnalytics": {
+            "resources": ["__WORKSPACE_RESOURCE_ID__"],
+            "query": "AppTraces | where $__timeFilter(TimeGenerated) | where tostring(Properties.event) == \"AIUsage\" | summarize Completion = sum(toint(Properties.completionTokens))",
+            "resultFormat": "table"
+          }
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Queries over time (by status: 200 ok / 400 guardrail / 429 throttled)",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 4 },
+      "datasource": { "type": "grafana-azure-monitor-datasource", "uid": "${dsAzureMonitor}" },
+      "fieldConfig": { "defaults": { "custom": { "drawStyle": "line", "fillOpacity": 15, "stacking": { "mode": "normal" } } } },
+      "targets": [
+        {
+          "refId": "A",
+          "queryType": "Azure Log Analytics",
+          "azureLogAnalytics": {
+            "resources": ["__WORKSPACE_RESOURCE_ID__"],
+            "query": "AppRequests | where $__timeFilter(TimeGenerated) | where Name has \"/chat/completions\" and Name startswith \"POST\" | summarize Queries = count() by Status = tostring(ResultCode), bin(TimeGenerated, $__interval) | order by TimeGenerated asc",
+            "resultFormat": "time_series"
+          }
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Token usage over time (by served model)",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 4 },
+      "datasource": { "type": "grafana-azure-monitor-datasource", "uid": "${dsAzureMonitor}" },
+      "fieldConfig": { "defaults": { "custom": { "drawStyle": "bars", "fillOpacity": 40, "stacking": { "mode": "normal" } } } },
+      "targets": [
+        {
+          "refId": "A",
+          "queryType": "Azure Log Analytics",
+          "azureLogAnalytics": {
+            "resources": ["__WORKSPACE_RESOURCE_ID__"],
+            "query": "AppTraces | where $__timeFilter(TimeGenerated) | where tostring(Properties.event) == \"AIUsage\" | extend model = tostring(Properties.servedModel), tokens = toint(Properties.totalTokens) | where tokens > 0 | summarize Tokens = sum(tokens) by model, bin(TimeGenerated, $__interval) | order by TimeGenerated asc",
+            "resultFormat": "time_series"
+          }
+        }
+      ]
+    },
+    {
+      "type": "piechart",
+      "title": "Queries by model / deployment",
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 12 },
+      "datasource": { "type": "grafana-azure-monitor-datasource", "uid": "${dsAzureMonitor}" },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "legend": { "displayMode": "table", "placement": "right", "values": ["value"] } },
+      "targets": [
+        {
+          "refId": "A",
+          "queryType": "Azure Log Analytics",
+          "azureLogAnalytics": {
+            "resources": ["__WORKSPACE_RESOURCE_ID__"],
+            "query": "AppRequests | where $__timeFilter(TimeGenerated) | where Name has \"/chat/completions\" and Name startswith \"POST\" | extend Deployment = tostring(split(tostring(split(Url, \"/deployments/\")[1]), \"/\")[0]) | summarize Queries = count() by Deployment",
+            "resultFormat": "table"
+          }
+        }
+      ]
+    },
+    {
+      "type": "piechart",
+      "title": "Status mix",
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 12 },
+      "datasource": { "type": "grafana-azure-monitor-datasource", "uid": "${dsAzureMonitor}" },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "legend": { "displayMode": "table", "placement": "right", "values": ["value"] } },
+      "targets": [
+        {
+          "refId": "A",
+          "queryType": "Azure Log Analytics",
+          "azureLogAnalytics": {
+            "resources": ["__WORKSPACE_RESOURCE_ID__"],
+            "query": "AppRequests | where $__timeFilter(TimeGenerated) | where Name has \"/chat/completions\" and Name startswith \"POST\" | summarize Queries = count() by Status = tostring(ResultCode)",
+            "resultFormat": "table"
+          }
+        }
+      ]
+    },
+    {
+      "type": "table",
+      "title": "Foundry backend answered (failover shows the secondary region)",
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 12 },
+      "datasource": { "type": "grafana-azure-monitor-datasource", "uid": "${dsAzureMonitor}" },
+      "targets": [
+        {
+          "refId": "A",
+          "queryType": "Azure Log Analytics",
+          "azureLogAnalytics": {
+            "resources": ["__WORKSPACE_RESOURCE_ID__"],
+            "query": "AppDependencies | where $__timeFilter(TimeGenerated) | where Target has \"cognitiveservices\" | summarize Calls = count() by Backend = tostring(Target) | order by Calls desc",
+            "resultFormat": "table"
+          }
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Model-call latency (p50 / p95, ms)",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 20 },
+      "datasource": { "type": "grafana-azure-monitor-datasource", "uid": "${dsAzureMonitor}" },
+      "fieldConfig": { "defaults": { "unit": "ms", "custom": { "drawStyle": "line", "fillOpacity": 10 } } },
+      "targets": [
+        {
+          "refId": "A",
+          "queryType": "Azure Log Analytics",
+          "azureLogAnalytics": {
+            "resources": ["__WORKSPACE_RESOURCE_ID__"],
+            "query": "AppDependencies | where $__timeFilter(TimeGenerated) | where Target has \"cognitiveservices\" | summarize p50 = percentile(DurationMs, 50), p95 = percentile(DurationMs, 95) by bin(TimeGenerated, $__interval) | order by TimeGenerated asc",
+            "resultFormat": "time_series"
+          }
+        }
+      ]
+    },
+    {
+      "type": "table",
+      "title": "Recent AI usage events (deployment, model, tokens)",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 20 },
+      "datasource": { "type": "grafana-azure-monitor-datasource", "uid": "${dsAzureMonitor}" },
+      "targets": [
+        {
+          "refId": "A",
+          "queryType": "Azure Log Analytics",
+          "azureLogAnalytics": {
+            "resources": ["__WORKSPACE_RESOURCE_ID__"],
+            "query": "AppTraces | where $__timeFilter(TimeGenerated) | where tostring(Properties.event) == \"AIUsage\" | project TimeGenerated, Deployment = tostring(Properties.deployment), Model = tostring(Properties.servedModel), Backend = tostring(Properties.backend), Status = tostring(Properties.status), PromptTokens = toint(Properties.promptTokens), CompletionTokens = toint(Properties.completionTokens), TotalTokens = toint(Properties.totalTokens) | order by TimeGenerated desc | take 100",
+            "resultFormat": "table"
+          }
+        }
+      ]
+    }
+  ]
+}

@@ -42,7 +42,8 @@ param deployApim bool = true
 
 @description('Enable APIM semantic caching (provisions Azure Cache for Redis + wires it as external cache).')
 param enableSemanticCache bool = true
-
+@description('Deploy Azure Managed Grafana with an AI Gateway dashboard (Standard SKU).')
+param deployGrafana bool = true
 @description('Embedding model deployment used by the semantic cache lookup policy.')
 param embeddingDeploymentName string = 'text-embedding-3-small'
 
@@ -98,6 +99,9 @@ var roleCognitiveServicesOpenAiUser = 'a97b65f3-24c7-4388-baec-2e87135dc908'
 var roleSearchIndexDataReader = '1407120a-92aa-4202-b7e9-c0e197c71c8f'
 var roleSearchServiceContributor = '7ca78c08-252a-4471-8644-bb5ff32d4ba0'
 var roleKeyVaultSecretsUser = '4633458b-17de-408a-b874-0445c86b69e6'
+var roleMonitoringReader = '43d0d8ad-25c7-4714-9337-8ba259a9fe05'
+var roleLogAnalyticsReader = '73c42c96-874c-492b-b04d-ab87d138a893'
+var roleGrafanaAdmin = '22926164-76b3-42b3-bc55-97df8dab3e41'
 
 // -----------------------------------------------------------------------------
 // Observability: Log Analytics + Application Insights
@@ -490,6 +494,23 @@ var apiPolicyXml = '''
   <outbound>
     <base />
     __SEMANTIC_CACHE_STORE__
+    <!-- AI usage event -> Application Insights (AppTraces): served model + token
+         counts + status, dimensioned so Grafana/Workbook can chart usage. -->
+    <set-variable name="aiServedModel" value="@{ try { var b = context.Response.Body?.As<JObject>(preserveContent: true); return b?["model"]?.ToString() ?? ""; } catch (Exception) { return ""; } }" />
+    <set-variable name="aiPromptTokens" value="@{ try { var b = context.Response.Body?.As<JObject>(preserveContent: true); return b?["usage"]?["prompt_tokens"]?.ToString() ?? "0"; } catch (Exception) { return "0"; } }" />
+    <set-variable name="aiCompletionTokens" value="@{ try { var b = context.Response.Body?.As<JObject>(preserveContent: true); return b?["usage"]?["completion_tokens"]?.ToString() ?? "0"; } catch (Exception) { return "0"; } }" />
+    <set-variable name="aiTotalTokens" value="@{ try { var b = context.Response.Body?.As<JObject>(preserveContent: true); return b?["usage"]?["total_tokens"]?.ToString() ?? "0"; } catch (Exception) { return "0"; } }" />
+    <trace source="ai-gateway" severity="information">
+      <message>@("AI usage: deployment=" + (string)context.Variables["deployment-id"] + " model=" + (string)context.Variables["aiServedModel"] + " totalTokens=" + (string)context.Variables["aiTotalTokens"])</message>
+      <metadata name="event" value="AIUsage" />
+      <metadata name="deployment" value="@((string)context.Variables["deployment-id"])" />
+      <metadata name="servedModel" value="@((string)context.Variables["aiServedModel"])" />
+      <metadata name="backend" value="@(context.Request.Url.Host)" />
+      <metadata name="status" value="@(context.Response.StatusCode.ToString())" />
+      <metadata name="promptTokens" value="@((string)context.Variables["aiPromptTokens"])" />
+      <metadata name="completionTokens" value="@((string)context.Variables["aiCompletionTokens"])" />
+      <metadata name="totalTokens" value="@((string)context.Variables["aiTotalTokens"])" />
+    </trace>
     <set-header name="x-served-backend" exists-action="override">
       <value>@(context.Request.Url.Host)</value>
     </set-header>
@@ -523,7 +544,7 @@ resource gatewayApiDiagnostics 'Microsoft.ApiManagement/service/apis/diagnostics
     alwaysLog: 'allErrors'
     loggerId: apimLogger.id
     sampling: { samplingType: 'fixed', percentage: 100 }
-    verbosity: 'information'
+    verbosity: 'verbose'
   }
 }
 
@@ -590,6 +611,54 @@ resource governanceWorkbook 'Microsoft.Insights/workbooks@2023-06-01' = {
     sourceId: logAnalytics.id
     version: 'Notebook/1.0'
     serializedData: workbookContent
+  }
+}
+
+// -----------------------------------------------------------------------------
+// Azure Managed Grafana — AI Gateway usage dashboards (Azure Monitor data source
+// is auto-provisioned; its managed identity is granted read access below, and
+// the dashboard JSON is imported by deploy-grafana.ps1 after provisioning).
+// -----------------------------------------------------------------------------
+resource grafana 'Microsoft.Dashboard/grafana@2023-09-01' = if (deployGrafana) {
+  name: 'amg-${resourceToken}'
+  location: location
+  tags: tags
+  sku: { name: 'Standard' }
+  identity: { type: 'SystemAssigned' }
+  properties: {
+    apiKey: 'Enabled'
+    publicNetworkAccess: 'Enabled'
+  }
+}
+
+// Grafana's managed identity -> read monitoring data + query Log Analytics.
+resource grafanaToMonitoring 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (deployGrafana) {
+  name: guid(resourceGroup().id, 'grafana', roleMonitoringReader)
+  scope: resourceGroup()
+  properties: {
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', roleMonitoringReader)
+    principalId: deployGrafana ? grafana.identity.principalId : ''
+    principalType: 'ServicePrincipal'
+  }
+}
+
+resource grafanaToLogAnalytics 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (deployGrafana) {
+  name: guid(resourceGroup().id, 'grafana', roleLogAnalyticsReader)
+  scope: resourceGroup()
+  properties: {
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', roleLogAnalyticsReader)
+    principalId: deployGrafana ? grafana.identity.principalId : ''
+    principalType: 'ServicePrincipal'
+  }
+}
+
+// Signed-in user -> Grafana Admin so they can open and edit the dashboard.
+resource userToGrafanaAdmin 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (deployGrafana && !empty(principalId)) {
+  name: guid(resourceGroup().id, principalId, roleGrafanaAdmin)
+  scope: grafana
+  properties: {
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', roleGrafanaAdmin)
+    principalId: principalId
   }
 }
 
@@ -704,3 +773,5 @@ output AZURE_SEARCH_INDEX_NAME string = searchIndexName
 output APPLICATIONINSIGHTS_CONNECTION_STRING string = appInsights.properties.ConnectionString
 output GOVERNANCE_WORKBOOK_ID string = governanceWorkbook.id
 output LOG_ANALYTICS_WORKSPACE_ID string = logAnalytics.id
+output GRAFANA_NAME string = deployGrafana ? grafana.name : ''
+output GRAFANA_ENDPOINT string = deployGrafana ? grafana.properties.endpoint : ''
