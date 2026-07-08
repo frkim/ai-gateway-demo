@@ -1,0 +1,27 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "environmentName": {
+      "value": "${AZURE_ENV_NAME}"
+    },
+    "location": {
+      "value": "${AZURE_LOCATION}"
+    },
+    "secondaryLocation": {
+      "value": "${SECONDARY_LOCATION=francecentral}"
+    },
+    "principalId": {
+      "value": "${AZURE_PRINCIPAL_ID}"
+    },
+    "modelRouterName": {
+      "value": "${MODEL_ROUTER_NAME=model-router}"
+    },
+    "publisherEmail": {
+      "value": "${APIM_PUBLISHER_EMAIL=admin@contoso.com}"
+    },
+    "publisherName": {
+      "value": "${APIM_PUBLISHER_NAME=Contoso AI Platform}"
+    }
+  }
+}

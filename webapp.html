@@ -1,0 +1,173 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Azure AI Gateway Demo</title>
+  <!-- React + Babel via CDN so the demo client needs no build step and can live as a
+       single root-level file. For a production build, move this into src/frontend as a
+       Vite React + TypeScript app pointing at the same gateway endpoint. -->
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <style>
+    :root { color-scheme: light dark; }
+    body { font-family: system-ui, Segoe UI, Roboto, sans-serif; margin: 0; background: #0f1115; color: #e6e6e6; }
+    header { padding: 16px 24px; background: #1b2330; border-bottom: 1px solid #2a3446; }
+    h1 { font-size: 18px; margin: 0; }
+    main { max-width: 900px; margin: 0 auto; padding: 24px; }
+    .config { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 16px; }
+    .config label { display: flex; flex-direction: column; font-size: 12px; gap: 4px; }
+    input, select, textarea { background: #10141b; color: #e6e6e6; border: 1px solid #2a3446; border-radius: 6px; padding: 8px; font-size: 14px; }
+    .row { display: flex; gap: 12px; align-items: flex-end; }
+    button { background: #2f6feb; color: #fff; border: 0; border-radius: 6px; padding: 10px 16px; font-size: 14px; cursor: pointer; }
+    button:disabled { opacity: .5; cursor: not-allowed; }
+    .msg { border: 1px solid #2a3446; border-radius: 8px; padding: 12px; margin: 12px 0; white-space: pre-wrap; }
+    .msg.user { background: #141a24; }
+    .msg.assistant { background: #101820; }
+    .badges { display: flex; gap: 8px; margin-top: 8px; flex-wrap: wrap; }
+    .badge { font-size: 11px; padding: 2px 8px; border-radius: 999px; border: 1px solid #2a3446; }
+    .badge.hit { background: #133a1f; border-color: #1f7a3f; }
+    .badge.miss { background: #3a2a13; border-color: #7a5a1f; }
+    .hint { font-size: 12px; opacity: .7; }
+  </style>
+</head>
+<body>
+  <header><h1>Azure AI Foundry v2 + APIM AI Gateway — Demo Client</h1></header>
+  <main id="root"></main>
+
+  <script type="text/babel">
+    const { useState } = React;
+
+    function App() {
+      // All connection + model settings are configuration-driven (never hardcoded
+      // in logic). Populate from the azd outputs after `azd up`.
+      const [gatewayUrl, setGatewayUrl] = useState(localStorage.getItem('gw') || '');
+      const [apiKey, setApiKey] = useState(localStorage.getItem('key') || '');
+      const [apiVersion, setApiVersion] = useState('2024-10-21');
+      // Deployment names are editable so no model name is baked into the client logic.
+      const [deployments, setDeployments] = useState(
+        localStorage.getItem('deps') || 'model-router,gpt-5-mini,gpt-5,gpt-5-chat,gpt-5-nano'
+      );
+      const [model, setModel] = useState('model-router');
+      const [useRag, setUseRag] = useState(false);
+      const [prompt, setPrompt] = useState('Summarize our enterprise return policy in two sentences.');
+      const [messages, setMessages] = useState([]);
+      const [busy, setBusy] = useState(false);
+
+      const deploymentList = deployments.split(',').map(s => s.trim()).filter(Boolean);
+
+      function persist() {
+        localStorage.setItem('gw', gatewayUrl);
+        localStorage.setItem('key', apiKey);
+        localStorage.setItem('deps', deployments);
+      }
+
+      async function send() {
+        if (!gatewayUrl || !apiKey || !prompt) return;
+        persist();
+        setBusy(true);
+        const started = performance.now();
+        const url = `${gatewayUrl.replace(/\/$/, '')}/deployments/${encodeURIComponent(model)}/chat/completions?api-version=${apiVersion}`;
+        const body = {
+          messages: [
+            { role: 'system', content: useRag
+              ? 'You are an enterprise assistant. Ground answers in the provided knowledge base.'
+              : 'You are a helpful enterprise assistant.' },
+            { role: 'user', content: prompt }
+          ]
+        };
+        try {
+          const res = await fetch(url, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Ocp-Apim-Subscription-Key': apiKey
+            },
+            body: JSON.stringify(body)
+          });
+          const latency = Math.round(performance.now() - started);
+          const cache = res.headers.get('x-cache') || 'n/a';
+          const backend = res.headers.get('x-served-backend') || 'n/a';
+          const remaining = res.headers.get('x-remaining-tokens') || 'n/a';
+          const data = await res.json().catch(() => ({}));
+          const answer = res.ok
+            ? (data.choices?.[0]?.message?.content ?? JSON.stringify(data))
+            : (data.error?.message ?? `HTTP ${res.status}`);
+          const served = data.model || model;
+          setMessages(m => [
+            ...m,
+            { role: 'user', content: prompt },
+            { role: 'assistant', content: answer, latency, cache, backend, remaining, served, status: res.status }
+          ]);
+        } catch (e) {
+          setMessages(m => [...m, { role: 'assistant', content: String(e), status: 0 }]);
+        } finally {
+          setBusy(false);
+        }
+      }
+
+      return (
+        <div>
+          <div className="config">
+            <label>Gateway URL (APIM_GATEWAY_URL)
+              <input value={gatewayUrl} placeholder="https://apim-xxx.azure-api.net/ai"
+                     onChange={e => setGatewayUrl(e.target.value)} />
+            </label>
+            <label>APIM subscription key
+              <input value={apiKey} type="password" placeholder="Ocp-Apim-Subscription-Key"
+                     onChange={e => setApiKey(e.target.value)} />
+            </label>
+            <label>Deployments (configurable — comma separated)
+              <input value={deployments} onChange={e => setDeployments(e.target.value)} />
+            </label>
+            <label>API version
+              <input value={apiVersion} onChange={e => setApiVersion(e.target.value)} />
+            </label>
+          </div>
+
+          <div className="row">
+            <label style={{flex:1}}>Prompt
+              <textarea rows="3" value={prompt} onChange={e => setPrompt(e.target.value)} />
+            </label>
+          </div>
+          <div className="row" style={{marginTop:12}}>
+            <label>Model / deployment
+              <select value={model} onChange={e => setModel(e.target.value)}>
+                {deploymentList.map(d => <option key={d} value={d}>{d}</option>)}
+              </select>
+            </label>
+            <label style={{flexDirection:'row', alignItems:'center', gap:6}}>
+              <input type="checkbox" checked={useRag} onChange={e => setUseRag(e.target.checked)} /> RAG grounding
+            </label>
+            <button disabled={busy} onClick={send}>{busy ? 'Sending…' : 'Send'}</button>
+          </div>
+          <p className="hint">Every request hits the single gateway endpoint. Choose
+            <code> model-router</code> to let Foundry route natively.</p>
+
+          <div>
+            {messages.map((m, i) => (
+              <div key={i} className={`msg ${m.role}`}>
+                <strong>{m.role}</strong>
+                <div>{m.content}</div>
+                {m.role === 'assistant' && (
+                  <div className="badges">
+                    <span className="badge">served: {m.served}</span>
+                    <span className="badge">status: {m.status}</span>
+                    <span className="badge">latency: {m.latency} ms</span>
+                    <span className={`badge ${m.cache === 'HIT' ? 'hit' : (m.cache === 'MISS' ? 'miss' : '')}`}>cache: {m.cache}</span>
+                    <span className="badge">backend: {m.backend}</span>
+                    <span className="badge">remaining tokens: {m.remaining}</span>
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+  </script>
+</body>
+</html>
