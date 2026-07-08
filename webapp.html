@@ -77,6 +77,14 @@
     .hr { height: 1px; background: var(--line); margin: 14px 0; border: 0; }
     .spin { display:inline-block; width:12px;height:12px;border:2px solid var(--line);border-top-color:var(--accent);border-radius:50%;animation:spin .7s linear infinite;vertical-align:-2px; }
     @keyframes spin { to { transform: rotate(360deg); } }
+    .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,.62); display: flex; align-items: center; justify-content: center; z-index: 50; padding: 20px; }
+    .modal { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 18px; max-width: 600px; width: 100%; box-shadow: 0 24px 70px rgba(0,0,0,.55); }
+    .modal-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; }
+    .modal-head h3 { margin: 0; }
+    .modal-close { background: transparent; border: 1px solid var(--line); color: var(--text); border-radius: 7px; padding: 4px 9px; }
+    .prompt-block { margin-top: 12px; }
+    .prompt-block pre { background: #0b0e14; border: 1px solid var(--line); border-radius: 8px; padding: 11px; margin: 6px 0 0; white-space: pre-wrap; font-size: 13px; font-family: ui-monospace, "Cascadia Code", Consolas, monospace; }
+    .feature-actions { display: flex; gap: 10px; align-items: center; margin-top: 4px; }
   </style>
 </head>
 <body>
@@ -337,16 +345,33 @@
     }
 
     function Router({ call, router, disabled }) {
+      const TRIVIAL = '1+1?';
+      const COMPLEX = 'Write a Monte Carlo function in Python that is optimized.';
       const [busy, setBusy] = useState(false); const [rows, setRows] = useState(null);
+      const [showPrompts, setShowPrompts] = useState(false);
       return (
         <Feature n="2" title="Native Foundry model router" disabled={disabled} busy={busy}
           onRun={async () => { setBusy(true);
-            const trivial = await call(router, 'What is 2 + 2? Answer with just the number.');
-            const hard = await call(router, 'Prove briefly that the square root of 2 is irrational.');
-            setRows([{ k: 'trivial prompt', ...trivial }, { k: 'hard prompt', ...hard }]); setBusy(false); }}>
-          <p className="desc">Send to <code>{router}</code> and let Foundry pick the underlying model. Foundry optimizes each request, so prompts may map to the <b>same</b> or <b>different</b> models — the served model column shows which one actually answered.</p>
+            const trivial = await call(router, TRIVIAL);
+            const hard = await call(router, COMPLEX);
+            setRows([{ k: 'trivial', ...trivial }, { k: 'complex', ...hard }]); setBusy(false); }}>
+          <p className="desc">Send two deliberately extreme prompts to <code>{router}</code> and let Foundry pick the underlying model. Foundry optimizes each request, so prompts may map to the <b>same</b> or <b>different</b> models — the served model column shows which one actually answered.</p>
+          <button className="ghost" style={{ marginBottom: 10 }} onClick={() => setShowPrompts(true)}>View prompts</button>
           {rows && <table><thead><tr><th>prompt</th><th>status</th><th>served model</th></tr></thead>
             <tbody>{rows.map((r,i) => <tr key={i}><td>{r.k}</td><td>{sPill(r.status)}</td><td className="mono">{r.served}</td></tr>)}</tbody></table>}
+          {showPrompts && (
+            <div className="modal-overlay" onClick={() => setShowPrompts(false)}>
+              <div className="modal" onClick={e => e.stopPropagation()}>
+                <div className="modal-head">
+                  <h3><span className="num">2</span> Model router — demo prompts</h3>
+                  <button className="modal-close" onClick={() => setShowPrompts(false)}>✕</button>
+                </div>
+                <p className="small muted">Two extreme prompts are sent to <code>{router}</code>; Foundry routes each to the model it deems best.</p>
+                <div className="prompt-block"><span className="badge">1 · trivial</span><pre>{TRIVIAL}</pre></div>
+                <div className="prompt-block"><span className="badge model">2 · complex</span><pre>{COMPLEX}</pre></div>
+              </div>
+            </div>
+          )}
         </Feature>
       );
     }
