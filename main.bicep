@@ -402,7 +402,10 @@ var apiPolicyXml = '''
         <header>*</header>
       </allowed-headers>
       <expose-headers>
-        <header>*</header>
+        <header>x-cache</header>
+        <header>x-served-backend</header>
+        <header>x-remaining-tokens</header>
+        <header>x-consumed-tokens</header>
       </expose-headers>
     </cors>
     <!-- Model abstraction: default to the native Foundry model router when the
