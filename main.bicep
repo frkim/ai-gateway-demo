@@ -81,8 +81,8 @@ param chatModelDeployments array = [
   }
 ]
 
-@description('Tokens-per-minute budget enforced per subscription key by the APIM token-limit policy.')
-param tokensPerMinute int = 20000
+@description('Tokens-per-minute budget enforced per subscription key by the APIM token-limit policy. Kept intentionally low so the demo reaches the 429 limit after a couple of calls.')
+param tokensPerMinute int = 2000
 
 // -----------------------------------------------------------------------------
 // Naming & tags
@@ -424,7 +424,7 @@ var apiPolicyXml = '''
       </when>
     </choose>
     <!-- Token-level governance: per-subscription tokens-per-minute budget. -->
-    <azure-openai-token-limit counter-key="@(context.Subscription?.Id ?? "anonymous")" tokens-per-minute="__TOKENS_PER_MINUTE__" estimate-prompt-tokens="true" remaining-tokens-header-name="x-remaining-tokens" tokens-consumed-header-name="x-consumed-tokens" />
+    <azure-openai-token-limit counter-key="@(context.Subscription?.Id ?? "anonymous")" tokens-per-minute="__TOKENS_PER_MINUTE__" estimate-prompt-tokens="false" remaining-tokens-header-name="x-remaining-tokens" tokens-consumed-header-name="x-consumed-tokens" />
     __SEMANTIC_CACHE_LOOKUP__
     <!-- Managed-identity auth to Azure AI Foundry (no keys). -->
     <authentication-managed-identity resource="https://cognitiveservices.azure.com" output-token-variable-name="msi-access-token" ignore-error="false" />
