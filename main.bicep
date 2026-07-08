@@ -386,6 +386,25 @@ var apiPolicyXml = '''
 <policies>
   <inbound>
     <base />
+    <!-- CORS: allow the single-file browser demo client (webapp.html) to call the
+         gateway and read the custom demo headers (x-cache, x-served-backend, token
+         headers). Origins are unrestricted for the demo; scope them for production. -->
+    <cors allow-credentials="false">
+      <allowed-origins>
+        <origin>*</origin>
+      </allowed-origins>
+      <allowed-methods>
+        <method>GET</method>
+        <method>POST</method>
+        <method>OPTIONS</method>
+      </allowed-methods>
+      <allowed-headers>
+        <header>*</header>
+      </allowed-headers>
+      <expose-headers>
+        <header>*</header>
+      </expose-headers>
+    </cors>
     <!-- Model abstraction: default to the native Foundry model router when the
          caller does not specify a deployment. Never hardcode model names here. -->
     <set-variable name="deployment-id" value="@(context.Request.MatchedParameters.ContainsKey("deployment-id") ? context.Request.MatchedParameters["deployment-id"] : "__MODEL_ROUTER__")" />

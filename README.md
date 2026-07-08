@@ -112,8 +112,18 @@ scenario with `--only <name>`. See [samples/README.md](samples/README.md).
 
 ### Browser client
 
-Open [webapp.html](webapp.html), paste the gateway URL and subscription key, and chat.
-Toggle RAG, switch deployments, and watch the cache/served-backend badges.
+Open [webapp.html](webapp.html) (a single-file React app — no build step) and paste the
+gateway URL and subscription key. It has three tabs:
+
+- **Chat playground** — pick any deployment or the native router, toggle RAG, and see the
+  served model, `x-cache`, `x-served-backend`, token and latency badges per message.
+- **Feature demos** — one-click cards for model abstraction, native routing, guardrails
+  (`400`), caching (`MISS`→`HIT`), token governance (`429`), and multi-region failover.
+- **Activity log** — a live table of every request with status, cache, backend, remaining
+  tokens and latency.
+
+> The gateway enables CORS so the browser can call it directly and read the custom demo
+> headers. Scope the allowed origins for production.
 
 ### REST client
 
