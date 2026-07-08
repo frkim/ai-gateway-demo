@@ -1,0 +1,15 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/Azure/azure-dev/main/schemas/v1.0/azure.yaml.json
+name: ai-gateway-demo
+metadata:
+  template: ai-gateway-demo@1.0.0
+# End-to-end demo: Azure AI Foundry v2 + Azure API Management AI Gateway
+# with native Foundry Model Router, multi-region deployment, guardrails,
+# semantic caching, token governance, observability and failover.
+#
+# The demo is provisioned entirely with Bicep (no manual Azure Portal steps).
+# `main.bicep` is resourceGroup-scoped and self-contained; `azd` creates the
+# resource group automatically.
+infra:
+  provider: bicep
+  path: .
+  module: main
