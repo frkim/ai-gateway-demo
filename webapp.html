@@ -47,6 +47,8 @@
     .chat-controls { display: flex; gap: 14px; align-items: flex-end; flex-wrap: wrap; margin-top: 12px; }
     .chat-controls button { padding: 9px 22px; }
     .rag-toggle { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--text); padding-bottom: 9px; white-space: nowrap; }
+    .citations { margin-top: 8px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel2); font-size: 12px; }
+    .citations ol { margin: 4px 0 0; padding-left: 18px; line-height: 1.5; }
     .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
     @media (max-width: 780px) { .grid2, .config { grid-template-columns: 1fr; } }
     h2 { font-size: 14px; margin: 0 0 4px; }
@@ -114,6 +116,9 @@
       const [apiKey, setApiKey] = useState(ls('key', ''));
       const [apiVersion, setApiVersion] = useState(ls('ver', '2024-10-21'));
       const [deployments, setDeployments] = useState(ls('deps', 'model-router,gpt-5-mini,gpt-5,gpt-5-nano'));
+      const [searchEndpoint, setSearchEndpoint] = useState(ls('searchEndpoint', ''));
+      const [searchIndex, setSearchIndex] = useState(ls('searchIndex', ''));
+      const [searchKey, setSearchKey] = useState(ls('searchKey', ''));
       const [tab, setTab] = useState('chat');
       const [conn, setConn] = useState(null); // null | 'ok' | 'bad'
       const [loadedLocal, setLoadedLocal] = useState(false);
@@ -126,7 +131,9 @@
       useEffect(() => {
         localStorage.setItem('gw', gatewayUrl); localStorage.setItem('key', apiKey);
         localStorage.setItem('ver', apiVersion); localStorage.setItem('deps', deployments);
-      }, [gatewayUrl, apiKey, apiVersion, deployments]);
+        localStorage.setItem('searchEndpoint', searchEndpoint); localStorage.setItem('searchIndex', searchIndex);
+        localStorage.setItem('searchKey', searchKey);
+      }, [gatewayUrl, apiKey, apiVersion, deployments, searchEndpoint, searchIndex, searchKey]);
 
       // When served locally, auto-populate connection settings from an (untracked)
       // config.json sitting next to this file. Existing values are never overwritten.
@@ -139,6 +146,9 @@
             if (cfg.apiKey) setApiKey(v => v || cfg.apiKey);
             if (cfg.deployments) setDeployments(v => v || cfg.deployments);
             if (cfg.apiVersion) setApiVersion(cfg.apiVersion);
+            if (cfg.searchEndpoint) setSearchEndpoint(v => v || cfg.searchEndpoint);
+            if (cfg.searchIndex) setSearchIndex(v => v || cfg.searchIndex);
+            if (cfg.searchKey) setSearchKey(v => v || cfg.searchKey);
             setLoadedLocal(true);
           })
           .catch(() => {});
@@ -149,19 +159,44 @@
         d.className = 'dot' + (conn === 'ok' ? ' ok' : conn === 'bad' ? ' bad' : '');
       }, [conn]);
 
+      // Retrieve-then-read RAG: query Azure AI Search directly for the top passages,
+      // then let the governed gateway answer grounded in them. Works with ANY model
+      // (including the gpt-5 family + router), unlike server-side "On Your Data".
+      async function retrievePassages(query) {
+        const url = `${clean(searchEndpoint)}/indexes/${encodeURIComponent(searchIndex)}/docs/search?api-version=2024-07-01`;
+        const res = await fetch(url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'api-key': searchKey },
+          body: JSON.stringify({ search: query, top: 5, queryType: 'simple' })
+        });
+        if (!res.ok) throw new Error('search ' + res.status);
+        const d = await res.json();
+        return (d.value || []).map(v => ({ title: v.title, content: v.content }));
+      }
+
       // Core call: always the SAME base URL, only the deployment id changes.
       async function callGateway(deployment, userText, opts = {}) {
-        const sys = opts.system || (opts.rag
-          ? 'You are an enterprise assistant. Ground answers in the provided enterprise knowledge base.'
-          : 'You are a helpful enterprise assistant.');
+        const canGround = !!(opts.rag && searchEndpoint && searchIndex && searchKey);
+        let citations = [];
+        let sys = opts.system || 'You are a helpful enterprise assistant.';
+        if (canGround) {
+          try { citations = await retrievePassages(userText); } catch (e) { citations = []; }
+          if (citations.length) {
+            const ctx = citations.map((c, i) => `[${i + 1}] ${c.title}\n${c.content}`).join('\n\n');
+            sys = 'You are an enterprise assistant. Answer the question using ONLY the numbered sources below. '
+                + 'If the answer is not contained in the sources, say you do not have that information. Cite sources inline as [n].\n\nSOURCES:\n' + ctx;
+          }
+        }
+        const grounded = canGround && citations.length > 0;
         const url = `${clean(gatewayUrl)}/deployments/${encodeURIComponent(deployment)}/chat/completions?api-version=${apiVersion}`;
+        const payload = { messages: [{ role: 'system', content: sys }, { role: 'user', content: userText }] };
         const started = performance.now();
         let status = 0, headers = {}, data = {}, answer = '', served = deployment;
         try {
           const res = await fetch(url, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', 'Ocp-Apim-Subscription-Key': apiKey },
-            body: JSON.stringify({ messages: [{ role: 'system', content: sys }, { role: 'user', content: userText }] })
+            body: JSON.stringify(payload)
           });
           status = res.status;
           headers = {
@@ -182,7 +217,7 @@
         const latency = Math.round(performance.now() - started);
         const entry = { t: new Date().toLocaleTimeString(), deployment, served, status, latency, ...headers };
         setLog(l => [entry, ...l].slice(0, 200));
-        return { status, headers, data, answer, served, latency };
+        return { status, headers, data, answer, served, latency, grounded, citations };
       }
 
       const configured = gatewayUrl && apiKey;
@@ -227,7 +262,7 @@
 
           {!configured && <div className="card small muted">Enter the gateway URL and subscription key above to begin.</div>}
 
-          {tab === 'chat'  && <Chat call={callGateway} deploymentList={deploymentList} router={router} disabled={!configured} />}
+          {tab === 'chat'  && <Chat call={callGateway} deploymentList={deploymentList} router={router} disabled={!configured} ragReady={!!(searchEndpoint && searchIndex && searchKey)} />}
           {tab === 'demos' && <Demos call={callGateway} router={router} concrete={concrete} disabled={!configured} />}
           {tab === 'log'   && <LogView log={log} onClear={() => setLog([])} />}
 
@@ -240,7 +275,7 @@
     }
 
     // ---- Chat playground ----------------------------------------------------
-    function Chat({ call, deploymentList, router, disabled }) {
+    function Chat({ call, deploymentList, router, disabled, ragReady }) {
       const [model, setModel] = useState(router);
       const [useRag, setUseRag] = useState(false);
       const [prompt, setPrompt] = useState('Summarize our enterprise return policy in two sentences.');
@@ -253,7 +288,7 @@
         const r = await call(model, prompt, { rag: useRag });
         setMessages(m => [...m,
           { role: 'user', content: prompt },
-          { role: 'assistant', content: r.answer, ...r.headers, served: r.served, status: r.status, latency: r.latency }
+          { role: 'assistant', content: r.answer, ...r.headers, served: r.served, status: r.status, latency: r.latency, grounded: r.grounded, citations: r.citations }
         ]);
         setBusy(false);
       }
@@ -277,7 +312,11 @@
             </label>
             <button disabled={disabled || busy} onClick={send}>{busy ? <span className="spin"></span> : 'Send'}</button>
           </div>
-          <p className="desc" style={{ marginTop: 10 }}>Pick <code>{router}</code> to let Foundry route natively, or a specific model to pin it — the client URL never changes.</p>
+          <p className="desc" style={{ marginTop: 10 }}>Pick <code>{router}</code> to let Foundry route natively, or a specific model to pin it — the client URL never changes.
+            {useRag && (ragReady
+              ? <span> · Grounding <b>on</b>: the top matches from Azure AI Search are retrieved and injected before the governed model call — works with any model, including the router.</span>
+              : <span className="muted"> · Grounding requested but Search isn't configured — the toggle is ignored. Run <span className="kbd">./ingest-kb.ps1</span> then <span className="kbd">./serve-local.ps1</span> and reload.</span>)}
+          </p>
           <div>
             {messages.map((m, i) => (
               <div key={i} className={`msg ${m.role}`}>
@@ -291,6 +330,17 @@
                     <span className={`badge ${m.cache === 'HIT' ? 'hit' : (m.cache === 'MISS' ? 'miss' : '')}`}>cache: {m.cache}</span>
                     <span className="badge">backend: {m.backend}</span>
                     <span className="badge">remaining: {m.remaining}</span>
+                    {m.grounded && <span className="badge hit">grounded: {(m.citations || []).length} citation{(m.citations || []).length === 1 ? '' : 's'}</span>}
+                  </div>
+                )}
+                {m.role === 'assistant' && m.grounded && (m.citations || []).length > 0 && (
+                  <div className="citations">
+                    <div className="who">sources</div>
+                    <ol>
+                      {m.citations.map((c, ci) => (
+                        <li key={ci}><b>{c.title || c.filepath || `doc ${ci + 1}`}</b>{c.content ? <span className="muted"> — {String(c.content).slice(0, 160)}{String(c.content).length > 160 ? '…' : ''}</span> : null}</li>
+                      ))}
+                    </ol>
                   </div>
                 )}
               </div>
@@ -464,7 +514,10 @@
         <div className="card">
           <h3><span className="num">7</span> Knowledge grounding (RAG)</h3>
           <p className="desc">Toggle <b>RAG grounding</b> in the Chat playground to ground answers in the enterprise knowledge base indexed in Azure AI Search
-            (index <code>enterprise-kb</code>). Ingest the sample content from <code>enterprise-kb.sample.md</code> first.</p>
+            (index <code>enterprise-kb</code>). The app does <b>retrieve-then-read</b>: it queries Search for the top passages, injects them into the prompt,
+            then calls the governed gateway — so grounding works with <b>any</b> model, including the gpt-5 family and the native router, and returns inline
+            <b>citations</b>. Seed the index once with <span className="kbd">./ingest-kb.ps1</span> (uploads the sections from <code>enterprise-kb.sample.md</code>),
+            then ask e.g. <i>“Summarize our enterprise return policy.”</i></p>
         </div>
       );
     }

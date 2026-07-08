@@ -30,8 +30,9 @@ $rg   = azd env get-value AZURE_RESOURCE_GROUP
 $svc  = azd env get-value APIM_SERVICE_NAME
 $sub  = azd env get-value AZURE_SUBSCRIPTION_ID
 $ver  = azd env get-value OPENAI_API_VERSION
+$srch = azd env get-value AZURE_SEARCH_ENDPOINT
+$sidx = azd env get-value AZURE_SEARCH_INDEX_NAME
 if ([string]::IsNullOrWhiteSpace($ver)) { $ver = "2024-10-21" }
-
 if ([string]::IsNullOrWhiteSpace($gw) -or [string]::IsNullOrWhiteSpace($svc)) {
   throw "Could not read APIM_GATEWAY_URL / APIM_SERVICE_NAME from azd. Run 'azd provision' first."
 }
@@ -40,11 +41,22 @@ Write-Host "==> Fetching APIM subscription key (ARM listSecrets)..." -Foreground
 $uri = "https://management.azure.com/subscriptions/$sub/resourceGroups/$rg/providers/Microsoft.ApiManagement/service/$svc/subscriptions/ai-gateway-demo/listSecrets?api-version=2023-05-01-preview"
 $key = az rest --method post --uri $uri --query primaryKey -o tsv
 
+# Read-only Search query key for client-side retrieve-then-read RAG (works with any model).
+$searchKey = ""
+if (-not [string]::IsNullOrWhiteSpace($srch)) {
+  $svcName = ($srch -replace 'https://', '' -replace '\.search\.windows\.net.*', '')
+  Write-Host "==> Fetching Azure AI Search query key..." -ForegroundColor Cyan
+  $searchKey = az search query-key list --service-name $svcName --resource-group $rg --query "[0].key" -o tsv 2>$null
+}
+
 $cfg = [ordered]@{
-  gatewayUrl  = $gw
-  apiKey      = $key
-  apiVersion  = $ver
-  deployments = "model-router,gpt-5-mini,gpt-5,gpt-5-nano"
+  gatewayUrl     = $gw
+  apiKey         = $key
+  apiVersion     = $ver
+  deployments    = "model-router,gpt-5-mini,gpt-5,gpt-5-nano"
+  searchEndpoint = $srch
+  searchIndex    = $sidx
+  searchKey      = $searchKey
 }
 $cfg | ConvertTo-Json | Set-Content -Path (Join-Path $PSScriptRoot "config.json") -Encoding utf8
 Write-Host "==> Wrote config.json (git-ignored)." -ForegroundColor Green
