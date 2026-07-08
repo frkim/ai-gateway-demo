@@ -149,9 +149,11 @@ resource keyVault 'Microsoft.KeyVault/vaults@2023-07-01' = {
 }
 
 // -----------------------------------------------------------------------------
-// Azure AI Foundry (AIServices) — primary & secondary regions
+// Azure AI Foundry (AIServices) — primary & secondary regions.
+// allowProjectManagement + a child `projects` resource use the new Foundry format
+// (an account of Type "Foundry" that contains a proper Foundry project).
 // -----------------------------------------------------------------------------
-resource foundryPrimary 'Microsoft.CognitiveServices/accounts@2024-10-01' = {
+resource foundryPrimary 'Microsoft.CognitiveServices/accounts@2025-06-01' = {
   name: 'aif-primary-${resourceToken}'
   location: location
   tags: tags
@@ -162,10 +164,24 @@ resource foundryPrimary 'Microsoft.CognitiveServices/accounts@2024-10-01' = {
     customSubDomainName: 'aif-primary-${resourceToken}'
     publicNetworkAccess: 'Enabled'
     disableLocalAuth: true
+    allowProjectManagement: true
   }
 }
 
-resource foundrySecondary 'Microsoft.CognitiveServices/accounts@2024-10-01' = {
+// Default Foundry project under the primary account (new Foundry format).
+resource foundryPrimaryProject 'Microsoft.CognitiveServices/accounts/projects@2025-06-01' = {
+  parent: foundryPrimary
+  name: 'proj-${resourceToken}'
+  location: location
+  tags: tags
+  identity: { type: 'SystemAssigned' }
+  properties: {
+    displayName: 'AI Gateway Demo (primary)'
+    description: 'Default Foundry project for the AI Gateway demo — primary region.'
+  }
+}
+
+resource foundrySecondary 'Microsoft.CognitiveServices/accounts@2025-06-01' = {
   name: 'aif-secondary-${resourceToken}'
   location: secondaryLocation
   tags: tags
@@ -176,6 +192,20 @@ resource foundrySecondary 'Microsoft.CognitiveServices/accounts@2024-10-01' = {
     customSubDomainName: 'aif-secondary-${resourceToken}'
     publicNetworkAccess: 'Enabled'
     disableLocalAuth: true
+    allowProjectManagement: true
+  }
+}
+
+// Default Foundry project under the secondary account (new Foundry format).
+resource foundrySecondaryProject 'Microsoft.CognitiveServices/accounts/projects@2025-06-01' = {
+  parent: foundrySecondary
+  name: 'proj-${resourceToken}'
+  location: secondaryLocation
+  tags: tags
+  identity: { type: 'SystemAssigned' }
+  properties: {
+    displayName: 'AI Gateway Demo (secondary)'
+    description: 'Default Foundry project for the AI Gateway demo — secondary region.'
   }
 }
 
