@@ -275,6 +275,29 @@
     }
 
     // ---- Chat playground ----------------------------------------------------
+    // Sample questions that map to sections of the enterprise knowledge base
+    // (enterprise-kb.sample.md) so the RAG grounding demo returns cited answers.
+    const SAMPLE_QUERIES = [
+      { group: 'Customer & orders', items: [
+        'Summarize our enterprise return policy in two sentences.',
+        'How long does standard shipping take and when is it free?',
+        'What does the hardware warranty cover and for how long?',
+        'Can I get a refund on an annual subscription?',
+      ] },
+      { group: 'Security & compliance', items: [
+        'What certifications does Contoso hold and how is data encrypted?',
+        'How do we handle a GDPR data deletion request?',
+        'What is our policy on using AI models and prompts?',
+        'Is MFA required, and how does password reset work?',
+      ] },
+      { group: 'People & operations', items: [
+        'How much PTO do full-time employees get and how much carries over?',
+        'What are the meal reimbursement limits for travel?',
+        'What happens during a Sev-1 incident?',
+        'What approvals are needed to buy software from a new vendor?',
+      ] },
+    ];
+
     function Chat({ call, deploymentList, router, disabled, ragReady }) {
       const [model, setModel] = useState(router);
       const [useRag, setUseRag] = useState(false);
@@ -301,6 +324,17 @@
                         style={{ width: '100%', marginTop: 5, resize: 'vertical' }} />
             </label>
           </div>
+          <label className="field" style={{ display: 'block', marginTop: 10 }}>Sample queries <span className="muted">(grounded in the enterprise KB)</span>
+            <select value="" onChange={e => { if (e.target.value) { setPrompt(e.target.value); if (!useRag) setUseRag(true); } }}
+                    style={{ width: '100%', marginTop: 5 }}>
+              <option value="">— pick a sample question —</option>
+              {SAMPLE_QUERIES.map((g, gi) => (
+                <optgroup key={gi} label={g.group}>
+                  {g.items.map((q, qi) => <option key={qi} value={q}>{q}</option>)}
+                </optgroup>
+              ))}
+            </select>
+          </label>
           <div className="chat-controls">
             <label className="field" style={{ minWidth: 200 }}>Model / deployment
               <select value={model} onChange={e => setModel(e.target.value)}>

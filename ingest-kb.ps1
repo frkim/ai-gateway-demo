@@ -52,12 +52,14 @@ $headers = @{ "api-key" = $adminKey; "Content-Type" = "application/json" }
 
 # --- 1. Create (or update) the index --------------------------------------------------
 Write-Host "==> Creating/updating index '$index'..." -ForegroundColor Cyan
+# Drop the index first so re-seeding is clean (removes any stale/renamed documents).
+try { Invoke-RestMethod -Method Delete -Uri "$endpoint/indexes/$index`?api-version=$ApiVersion" -Headers $headers | Out-Null } catch { }
 $indexDef = @{
   name   = $index
   fields = @(
     @{ name = "id";       type = "Edm.String"; key = $true;  searchable = $false; filterable = $true  }
-    @{ name = "title";    type = "Edm.String"; searchable = $true;  filterable = $false; sortable = $false }
-    @{ name = "content";  type = "Edm.String"; searchable = $true;  filterable = $false; sortable = $false }
+    @{ name = "title";    type = "Edm.String"; searchable = $true;  filterable = $false; sortable = $false; analyzer = "en.microsoft" }
+    @{ name = "content";  type = "Edm.String"; searchable = $true;  filterable = $false; sortable = $false; analyzer = "en.microsoft" }
     @{ name = "category"; type = "Edm.String"; searchable = $true;  filterable = $true                  }
   )
   # Allow the browser demo (served from 127.0.0.1) to query the index directly for
