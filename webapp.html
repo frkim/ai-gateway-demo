@@ -344,7 +344,7 @@
             const trivial = await call(router, 'What is 2 + 2? Answer with just the number.');
             const hard = await call(router, 'Prove briefly that the square root of 2 is irrational.');
             setRows([{ k: 'trivial prompt', ...trivial }, { k: 'hard prompt', ...hard }]); setBusy(false); }}>
-          <p className="desc">Send to <code>{router}</code> and let Foundry pick the underlying model. Watch the served model differ by prompt complexity.</p>
+          <p className="desc">Send to <code>{router}</code> and let Foundry pick the underlying model. Foundry optimizes each request, so prompts may map to the <b>same</b> or <b>different</b> models — the served model column shows which one actually answered.</p>
           {rows && <table><thead><tr><th>prompt</th><th>status</th><th>served model</th></tr></thead>
             <tbody>{rows.map((r,i) => <tr key={i}><td>{r.k}</td><td>{sPill(r.status)}</td><td className="mono">{r.served}</td></tr>)}</tbody></table>}
         </Feature>
