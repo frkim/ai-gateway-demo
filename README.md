@@ -22,22 +22,24 @@ manual Azure Portal steps**.
 
 ## Architecture
 
-```text
-Client (webapp.html / samples/demo.py)
-  └── Azure API Management — AI Gateway (single HTTPS endpoint: {apim}/ai)
-        • managed-identity auth to Foundry (no keys)
-        • prompt-injection / jailbreak guardrail
-        • token-per-minute governance (azure-openai-token-limit)
-        • response caching (x-cache HIT/MISS)
-        • token metrics (azure-openai-emit-token-metric)
-        • primary → secondary failover (retry + circuit breaker)
-        ├── Azure AI Foundry — Primary region (model-router + gpt-5 family)
-        └── Azure AI Foundry — Secondary region (gpt-5 family)
-  └── Azure AI Search  (enterprise knowledge base — RAG)
-  └── Azure Monitor / Application Insights / Log Analytics
+```mermaid
+flowchart LR
+  C["Clients<br/>webapp.html · samples/demo.py · requests.http"]
+  G["APIM AI Gateway<br/>single endpoint /ai<br/>guardrails · token limits · cache<br/>metrics · failover · managed identity"]
+  P["Foundry — Primary<br/>Sweden Central<br/>model-router + gpt-5 family"]
+  S["Foundry — Secondary<br/>West Europe<br/>gpt-5 family"]
+  R["Azure AI Search<br/>RAG (enterprise-kb)"]
+  O["Application Insights<br/>Log Analytics"]
+
+  C --> G
+  G --> P
+  G -. "failover" .-> S
+  G -. "RAG" .-> R
+  G --> O
 ```
 
-See [ARCHITECTURE.md](ARCHITECTURE.md) for the full component list and design rationale.
+The full component list, request-lifecycle and failover **sequence diagrams**, the policy
+pipeline and the managed-identity flow are in [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ---
 
@@ -184,14 +186,16 @@ python samples/demo.py --from-azd --only failover   # backend flips to secondary
 | `azure.yaml` | azd project definition (infra-only) |
 | `deploy.ps1` / `deploy.sh` | One-command provisioning wrappers |
 | `samples/demo.py` | Python feature demo (stdlib only) |
-| `webapp.html` | Single-file React demo client |
+| `samples/README.md` | Python demo guide |
+| `webapp.html` | Single-file React demo dashboard (Chat · Feature demos · Activity log) |
 | `requests.http` | REST Client sample requests |
-| `failover-demo.sh` | Simulates a primary-region outage |
+| `failover-demo.sh` | Simulates a primary-region outage (backend swap) |
 | `enterprise-kb.sample.md` | Sample RAG knowledge base |
-| `ARCHITECTURE.md` | Architecture & design |
+| `.github/workflows/azure-dev.yml` | CI/CD pipeline (azd provision, default Sweden Central) |
+| `ARCHITECTURE.md` | Architecture, diagrams & design |
 | `CONFIGURATION.md` | Configuration / model overrides |
 | `DEMO_RUNBOOK.md` | Stakeholder walkthrough |
-| `CICD.md` | GitHub Actions + azd (OIDC) pipeline |
+| `CICD.md` | GitHub Actions + azd pipeline |
 
 ---
 
