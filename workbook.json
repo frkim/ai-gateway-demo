@@ -1,0 +1,159 @@
+{
+  "version": "Notebook/1.0",
+  "items": [
+    {
+      "type": 1,
+      "content": {
+        "json": "# AI Gateway — Governance & Observability\n\nToken usage, model routing, cache, guardrails, throttling, latency and multi-region failover for the Azure AI Foundry + APIM AI Gateway demo. Gateway request/latency data comes from Application Insights (`AppRequests` / `AppDependencies`); Foundry token counts and request logs come from the Cognitive Services diagnostic settings (`AzureMetrics` / `AzureDiagnostics`)."
+      },
+      "name": "title"
+    },
+    {
+      "type": 9,
+      "content": {
+        "version": "KqlParameterItem/1.0",
+        "parameters": [
+          {
+            "id": "tr",
+            "version": "KqlParameterItem/1.0",
+            "name": "TimeRange",
+            "type": 4,
+            "value": { "durationMs": 86400000 },
+            "typeSettings": {
+              "selectableValues": [
+                { "durationMs": 3600000 },
+                { "durationMs": 14400000 },
+                { "durationMs": 86400000 },
+                { "durationMs": 259200000 },
+                { "durationMs": 604800000 }
+              ]
+            }
+          }
+        ],
+        "style": "pills",
+        "queryType": 0
+      },
+      "name": "parameters"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "AppRequests\n| where TimeGenerated {TimeRange}\n| where Name has \"/chat/completions\"\n| extend Deployment = tostring(split(tostring(split(Url, \"/deployments/\")[1]), \"/\")[0])\n| summarize Calls = count() by Deployment, Status = tostring(ResultCode)\n| order by Calls desc",
+        "size": 0,
+        "title": "Gateway calls by deployment & status",
+        "timeContext": { "durationMs": 0 },
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "visualization": "barchart"
+      },
+      "name": "calls-by-deployment",
+      "styleSettings": { "showBorder": true }
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "AppRequests\n| where TimeGenerated {TimeRange}\n| where Name has \"/chat/completions\"\n| summarize Calls = count() by bin(TimeGenerated, 15m), Status = tostring(ResultCode)\n| render timechart",
+        "size": 0,
+        "title": "Requests over time (by status: 200 ok, 400 guardrail, 429 throttled)",
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "visualization": "timechart"
+      },
+      "name": "requests-over-time",
+      "styleSettings": { "showBorder": true }
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "AppRequests\n| where TimeGenerated {TimeRange}\n| where Name has \"/chat/completions\"\n| summarize Calls = count() by Status = tostring(ResultCode)",
+        "size": 1,
+        "title": "Status mix",
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "visualization": "piechart"
+      },
+      "name": "status-mix",
+      "styleSettings": { "showBorder": true, "maxWidth": "50" }
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "AppDependencies\n| where TimeGenerated {TimeRange}\n| where Target has \"cognitiveservices\"\n| summarize Calls = count() by Backend = tostring(Target)\n| order by Calls desc",
+        "size": 1,
+        "title": "Which Foundry backend answered (failover shows the secondary region)",
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "visualization": "table"
+      },
+      "name": "backend-answered",
+      "styleSettings": { "showBorder": true, "maxWidth": "50" }
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "AppDependencies\n| where TimeGenerated {TimeRange}\n| where Target has \"cognitiveservices\"\n| summarize p50 = percentile(DurationMs, 50), p95 = percentile(DurationMs, 95) by bin(TimeGenerated, 15m)\n| render timechart",
+        "size": 0,
+        "title": "Model call latency (p50 / p95, ms)",
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "visualization": "timechart"
+      },
+      "name": "latency",
+      "styleSettings": { "showBorder": true }
+    },
+    {
+      "type": 1,
+      "content": { "json": "## Foundry token usage & model logs\n\nThese tiles read the Cognitive Services diagnostic data sent to Log Analytics (`AzureMetrics` for token counts, `AzureDiagnostics` for per-request logs). Allow a few minutes after the first calls for data to appear." },
+      "name": "foundry-header"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "AzureMetrics\n| where TimeGenerated {TimeRange}\n| where ResourceProvider == \"MICROSOFT.COGNITIVESERVICES\"\n| where MetricName in (\"ProcessedPromptTokens\", \"GeneratedTokens\", \"ProcessedInferenceTokens\", \"TokenTransaction\")\n| summarize Tokens = sum(Total) by MetricName, bin(TimeGenerated, 15m)\n| render columnchart",
+        "size": 0,
+        "title": "Token usage over time (prompt vs generated)",
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "visualization": "timechart"
+      },
+      "name": "tokens-over-time",
+      "styleSettings": { "showBorder": true }
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "AzureMetrics\n| where TimeGenerated {TimeRange}\n| where ResourceProvider == \"MICROSOFT.COGNITIVESERVICES\"\n| where MetricName in (\"ProcessedPromptTokens\", \"GeneratedTokens\", \"ProcessedInferenceTokens\", \"TokenTransaction\")\n| summarize Total = sum(Total) by Account = tostring(split(Resource, \"/\")[-1]), MetricName\n| order by Total desc",
+        "size": 0,
+        "title": "Total tokens by Foundry account & metric",
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "visualization": "table"
+      },
+      "name": "tokens-by-account",
+      "styleSettings": { "showBorder": true }
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "AzureDiagnostics\n| where TimeGenerated {TimeRange}\n| where ResourceProvider == \"MICROSOFT.COGNITIVESERVICES\"\n| summarize Calls = count() by Category, OperationName, ResultSignature = column_ifexists(\"ResultSignature_s\", \"\")\n| order by Calls desc",
+        "size": 0,
+        "title": "Foundry request logs (by category & operation)",
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "visualization": "table"
+      },
+      "name": "foundry-logs",
+      "styleSettings": { "showBorder": true }
+    }
+  ],
+  "fallbackResourceIds": [ "__WORKSPACE_ID__" ],
+  "$schema": "https://github.com/Microsoft/Application-Insights-Workbooks/blob/master/schema/workbook.json"
+}

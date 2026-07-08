@@ -539,6 +539,62 @@ resource gatewaySubscription 'Microsoft.ApiManagement/service/subscriptions@2023
 }
 
 // -----------------------------------------------------------------------------
+// Diagnostics -> Log Analytics: Foundry request logs + token metrics, and the
+// APIM gateway resource logs. These feed the governance workbook below.
+// -----------------------------------------------------------------------------
+resource foundryPrimaryDiag 'Microsoft.Insights/diagnosticSettings@2021-05-01-preview' = {
+  name: 'to-law'
+  scope: foundryPrimary
+  properties: {
+    workspaceId: logAnalytics.id
+    logs: [ { categoryGroup: 'allLogs', enabled: true } ]
+    metrics: [ { category: 'AllMetrics', enabled: true } ]
+  }
+}
+
+resource foundrySecondaryDiag 'Microsoft.Insights/diagnosticSettings@2021-05-01-preview' = {
+  name: 'to-law'
+  scope: foundrySecondary
+  properties: {
+    workspaceId: logAnalytics.id
+    logs: [ { categoryGroup: 'allLogs', enabled: true } ]
+    metrics: [ { category: 'AllMetrics', enabled: true } ]
+  }
+}
+
+resource apimDiag 'Microsoft.Insights/diagnosticSettings@2021-05-01-preview' = if (deployApim) {
+  name: 'to-law'
+  scope: apim
+  properties: {
+    workspaceId: logAnalytics.id
+    logs: [ { categoryGroup: 'allLogs', enabled: true } ]
+    metrics: [ { category: 'AllMetrics', enabled: true } ]
+  }
+}
+
+// -----------------------------------------------------------------------------
+// Azure Monitor Workbook — one-click governance dashboard (token usage, routing,
+// cache, guardrails, throttling, latency, failover). Definition lives in
+// workbook.json; the workspace id is injected as the default (fallback) scope.
+// -----------------------------------------------------------------------------
+var workbookContent = replace(loadTextContent('workbook.json'), '__WORKSPACE_ID__', logAnalytics.id)
+
+resource governanceWorkbook 'Microsoft.Insights/workbooks@2023-06-01' = {
+  name: guid(resourceGroup().id, 'ai-gateway-governance-workbook')
+  location: location
+  tags: tags
+  kind: 'shared'
+  properties: {
+    displayName: 'AI Gateway — Governance & Observability'
+    category: 'workbook'
+    sourceId: logAnalytics.id
+    version: 'Notebook/1.0'
+    serializedData: workbookContent
+  }
+}
+
+
+// -----------------------------------------------------------------------------
 // RBAC — managed identity everywhere; no keys in app config.
 // -----------------------------------------------------------------------------
 
@@ -646,3 +702,5 @@ output EMBEDDING_DEPLOYMENT_NAME string = enableSemanticCache ? embeddingDeploym
 output AZURE_SEARCH_ENDPOINT string = 'https://${search.name}.search.windows.net'
 output AZURE_SEARCH_INDEX_NAME string = searchIndexName
 output APPLICATIONINSIGHTS_CONNECTION_STRING string = appInsights.properties.ConnectionString
+output GOVERNANCE_WORKBOOK_ID string = governanceWorkbook.id
+output LOG_ANALYTICS_WORKSPACE_ID string = logAnalytics.id
