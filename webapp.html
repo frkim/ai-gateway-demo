@@ -407,16 +407,24 @@
 
     function Tokens({ call, concrete, disabled }) {
       const [busy, setBusy] = useState(false); const [rows, setRows] = useState([]); const [note, setNote] = useState('');
+      const stopRef = useRef(false);
       return (
         <Feature n="5" title="Token governance" disabled={disabled} busy={busy} runLabel="Burst 12 large prompts"
-          onRun={async () => { setBusy(true); setRows([]); setNote(''); const big = 'Write a detailed 400-word essay about zero-trust network architecture. '.repeat(3);
-            let hit = false;
-            for (let i = 1; i <= 12; i++) { const r = await call(concrete, `${big} (variation ${i})`);
+          onRun={async () => { setBusy(true); setRows([]); setNote(''); stopRef.current = false;
+            const big = 'Write a detailed 400-word essay about zero-trust network architecture. '.repeat(3);
+            let outcome = 'none';
+            for (let i = 1; i <= 12; i++) {
+              if (stopRef.current) { outcome = 'stopped'; break; }
+              const r = await call(concrete, `${big} (variation ${i})`);
               setRows(rs => [...rs, { i, ...r }]);
-              if (r.status === 429) { hit = true; setNote('429 Too Many Requests from azure-openai-token-limit policy.'); break; } }
-            if (!hit) setNote('Budget not exhausted this run — the per-minute window resets; lower tokensPerMinute to force a 429 faster.');
+              if (r.status === 429) { outcome = 'limit'; break; } }
+            setNote(outcome === 'limit' ? '429 Too Many Requests from azure-openai-token-limit policy.'
+              : outcome === 'stopped' ? 'Stopped by user.'
+              : 'Budget not exhausted this run — the per-minute window resets; lower tokensPerMinute to force a 429 faster.');
             setBusy(false); }}>
           <p className="desc">A per-subscription tokens-per-minute budget is enforced. Response headers report the remaining/consumed tokens; exceeding it returns <code>429</code>.</p>
+          {busy && <button className="ghost" style={{ marginBottom: 10, borderColor: 'var(--red)', color: '#f2a1aa' }}
+            onClick={() => { stopRef.current = true; }}>■ Stop</button>}
           {rows.length > 0 && <table><thead><tr><th>#</th><th>status</th><th>remaining</th><th>consumed</th></tr></thead>
             <tbody>{rows.map(r => <tr key={r.i}><td>{r.i}</td><td>{sPill(r.status)}</td><td className="mono">{r.headers.remaining}</td><td className="mono">{r.headers.consumed}</td></tr>)}</tbody></table>}
           {note && <p className="small muted" style={{ marginTop: 8 }}>{note}</p>}
