@@ -3,6 +3,11 @@
 ##
 ## Get latest from https://github.com/github/gitignore/blob/main/VisualStudio.gitignore
 
+# AI Gateway demo — local-only secrets / build artifacts (never commit)
+config.json
+_conn.json
+main.json
+
 # User-specific files
 *.rsuser
 *.suo

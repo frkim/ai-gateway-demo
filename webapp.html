@@ -31,7 +31,8 @@
     main { max-width: 1080px; margin: 0 auto; padding: 20px; }
     .card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 16px; margin-bottom: 16px; }
     .config { display: grid; grid-template-columns: 2fr 1fr; gap: 12px; }
-    .config label, .field label { display: flex; flex-direction: column; font-size: 12px; gap: 5px; color: var(--muted); }
+    .config label, label.field, .field label { display: flex; flex-direction: column; font-size: 12px; gap: 5px; color: var(--muted); }
+    label.field > select, label.field > textarea, label.field > input { width: 100%; }
     input, select, textarea { background: #0b0e14; color: var(--text); border: 1px solid var(--line); border-radius: 7px; padding: 9px; font-size: 14px; font-family: inherit; }
     input:focus, textarea:focus, select:focus { outline: none; border-color: var(--accent); }
     button { background: var(--accent2); color: #fff; border: 0; border-radius: 7px; padding: 9px 15px; font-size: 13px; cursor: pointer; font-weight: 600; }
@@ -43,6 +44,9 @@
     .tab { padding: 8px 14px; border-radius: 8px; border: 1px solid var(--line); background: var(--panel); cursor: pointer; font-size: 13px; color: var(--muted); }
     .tab.active { background: var(--accent2); border-color: var(--accent2); color: #fff; font-weight: 600; }
     .row { display: flex; gap: 12px; align-items: flex-end; flex-wrap: wrap; }
+    .chat-controls { display: flex; gap: 14px; align-items: flex-end; flex-wrap: wrap; margin-top: 12px; }
+    .chat-controls button { padding: 9px 22px; }
+    .rag-toggle { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--text); padding-bottom: 9px; white-space: nowrap; }
     .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
     @media (max-width: 780px) { .grid2, .config { grid-template-columns: 1fr; } }
     h2 { font-size: 14px; margin: 0 0 4px; }
@@ -104,6 +108,7 @@
       const [deployments, setDeployments] = useState(ls('deps', 'model-router,gpt-5-mini,gpt-5,gpt-5-nano'));
       const [tab, setTab] = useState('chat');
       const [conn, setConn] = useState(null); // null | 'ok' | 'bad'
+      const [loadedLocal, setLoadedLocal] = useState(false);
       const [log, setLog] = useState([]);
 
       const deploymentList = deployments.split(',').map(s => s.trim()).filter(Boolean);
@@ -114,6 +119,22 @@
         localStorage.setItem('gw', gatewayUrl); localStorage.setItem('key', apiKey);
         localStorage.setItem('ver', apiVersion); localStorage.setItem('deps', deployments);
       }, [gatewayUrl, apiKey, apiVersion, deployments]);
+
+      // When served locally, auto-populate connection settings from an (untracked)
+      // config.json sitting next to this file. Existing values are never overwritten.
+      useEffect(() => {
+        fetch('config.json', { cache: 'no-store' })
+          .then(r => (r.ok ? r.json() : null))
+          .then(cfg => {
+            if (!cfg) return;
+            if (cfg.gatewayUrl) setGatewayUrl(v => v || cfg.gatewayUrl);
+            if (cfg.apiKey) setApiKey(v => v || cfg.apiKey);
+            if (cfg.deployments) setDeployments(v => v || cfg.deployments);
+            if (cfg.apiVersion) setApiVersion(cfg.apiVersion);
+            setLoadedLocal(true);
+          })
+          .catch(() => {});
+      }, []);
 
       useEffect(() => {
         const d = document.getElementById('statusDot');
@@ -182,6 +203,7 @@
               <span className="small muted">
                 Populate from <code>azd env get-values</code> and the APIM subscription key
                 (<code>az rest … listSecrets</code>). Values are stored only in your browser.
+                {loadedLocal && <span style={{ color: 'var(--green)' }}> · auto-loaded from config.json</span>}
               </span>
               <button className="ghost" disabled={!configured} onClick={async () => {
                 setConn(null); const r = await callGateway(concrete, 'Reply with one word: ok.');
@@ -231,17 +253,18 @@
       return (
         <div className="card">
           <div className="row">
-            <label className="field" style={{ flex: 1 }}>Prompt
-              <textarea rows="3" value={prompt} onChange={e => setPrompt(e.target.value)} />
+            <label className="field" style={{ display: 'block', flex: 1 }}>Prompt
+              <textarea rows="3" value={prompt} onChange={e => setPrompt(e.target.value)}
+                        style={{ width: '100%', marginTop: 5, resize: 'vertical' }} />
             </label>
           </div>
-          <div className="row" style={{ marginTop: 12 }}>
-            <label className="field">Model / deployment
+          <div className="chat-controls">
+            <label className="field" style={{ minWidth: 200 }}>Model / deployment
               <select value={model} onChange={e => setModel(e.target.value)}>
                 {deploymentList.map(d => <option key={d} value={d}>{d}</option>)}
               </select>
             </label>
-            <label className="field" style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+            <label className="rag-toggle">
               <input type="checkbox" checked={useRag} onChange={e => setUseRag(e.target.checked)} /> RAG grounding
             </label>
             <button disabled={disabled || busy} onClick={send}>{busy ? <span className="spin"></span> : 'Send'}</button>

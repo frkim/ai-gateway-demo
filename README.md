@@ -124,8 +124,16 @@ gateway URL and subscription key. It has three tabs:
 - **Activity log** — a live table of every request with status, cache, backend, remaining
   tokens and latency.
 
+**Run locally with settings pre-filled** (writes an untracked `config.json` the page
+auto-loads, then serves it):
+
+```powershell
+./serve-local.ps1        # http://127.0.0.1:8000/webapp.html
+```
+
 > The gateway enables CORS so the browser can call it directly and read the custom demo
-> headers. Scope the allowed origins for production.
+> headers. Scope the allowed origins for production. `config.json` holds the subscription
+> key and is git-ignored — never commit it.
 
 ### REST client
 
