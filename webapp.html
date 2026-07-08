@@ -47,7 +47,7 @@
       const [apiVersion, setApiVersion] = useState('2024-10-21');
       // Deployment names are editable so no model name is baked into the client logic.
       const [deployments, setDeployments] = useState(
-        localStorage.getItem('deps') || 'model-router,gpt-5-mini,gpt-5,gpt-5-chat,gpt-5-nano'
+        localStorage.getItem('deps') || 'model-router,gpt-5-mini,gpt-5,gpt-5-nano'
       );
       const [model, setModel] = useState('model-router');
       const [useRag, setUseRag] = useState(false);

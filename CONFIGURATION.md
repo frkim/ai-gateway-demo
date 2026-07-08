@@ -12,22 +12,26 @@ Set these with `azd env set <NAME> <VALUE>` before `azd up`, or accept the defau
 | Variable | Purpose | Default |
 | --- | --- | --- |
 | `AZURE_LOCATION` | Primary region + primary Foundry account | `swedencentral` (prompted) |
-| `SECONDARY_LOCATION` | Secondary / failover region | `francecentral` |
+| `SECONDARY_LOCATION` | Secondary / failover region | `westeurope` |
 | `MODEL_ROUTER_NAME` | Native Foundry model router deployment name | `model-router` |
 | `APIM_PUBLISHER_EMAIL` | Required APIM publisher email | `admin@contoso.com` |
 | `APIM_PUBLISHER_NAME` | APIM publisher org name | `Contoso AI Platform` |
 
 ## Model catalog (`chatModelDeployments`)
 
-The default catalog (see `main.bicep`) deploys, in **both** regions:
+The default catalog (see `main.bicep`) deploys the `model-router` in the **primary**
+region and the gpt-5 family in **both** regions:
 
-| Deployment | Model | Purpose |
-| --- | --- | --- |
-| `model-router` | `model-router` | Native Foundry routing across the family |
-| `gpt-5-mini` | `gpt-5-mini` | Fast / cheap |
-| `gpt-5` | `gpt-5` | Balanced |
-| `gpt-5-chat` | `gpt-5-chat` | Conversational |
-| `gpt-5-nano` | `gpt-5-nano` | Ultra-low latency |
+| Deployment | Model | Region(s) | Purpose |
+| --- | --- | --- | --- |
+| `model-router` | `model-router` (2025-11-18) | Primary only | Native Foundry routing across the family |
+| `gpt-5-mini` | `gpt-5-mini` (2025-08-07) | Primary + Secondary | Fast / cheap |
+| `gpt-5` | `gpt-5` (2025-08-07) | Primary + Secondary | Balanced |
+| `gpt-5-nano` | `gpt-5-nano` (2025-08-07) | Primary + Secondary | Ultra-low latency |
+
+> The native `model-router` is only offered in Sweden Central among EU-residency regions.
+> It is deployed in the primary region only; set `routerInSecondary=true` if your
+> secondary region offers it. Multi-region failover uses `gpt-5-mini` (present in both).
 
 > **No Mistral is used anywhere in this demo.** Only Microsoft/OpenAI models available
 > through Microsoft Foundry are deployed.
@@ -44,7 +48,6 @@ fallbacks (all non-Mistral):
 | `gpt-5` | `gpt-4.1` |
 | `gpt-5-mini` | `gpt-4.1-mini` |
 | `gpt-5-nano` | `o4-mini` |
-| `gpt-5-chat` | `gpt-4.1` |
 | `model-router` | any single chat deployment above |
 
 Model **versions** in the default catalog are examples; set the `version` for each entry

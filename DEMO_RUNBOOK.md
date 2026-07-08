@@ -7,7 +7,7 @@ A ~15 minute walkthrough for enterprise architects / platform teams / CIO stakeh
 ```bash
 azd auth login
 azd env new ai-gateway-demo
-azd env set SECONDARY_LOCATION francecentral
+azd env set SECONDARY_LOCATION westeurope
 azd up           # pick the primary region when prompted (e.g. swedencentral)
 ```
 
@@ -55,11 +55,14 @@ Ask the same question twice. The first response has `x-cache: MISS`, the second
 ## 6. Multi-region failover
 
 Run the failover demo to disable the primary Foundry account and watch traffic move to
-the secondary region (the `x-served-backend` header changes):
+the secondary region (the `x-served-backend` header changes). Use a concrete model that
+exists in both regions (`gpt-5-mini`) — the native `model-router` is primary-region only:
 
 ```bash
 ./failover-demo.sh disable   # blocks the primary account
-# send a request from webapp.html -> x-served-backend now points to the secondary region
+# send a gpt-5-mini request from webapp.html or:
+#   python samples/demo.py --from-azd --only failover
+# -> x-served-backend now points to the secondary region
 ./failover-demo.sh enable    # restore the primary account
 ```
 

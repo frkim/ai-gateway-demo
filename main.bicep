@@ -16,13 +16,20 @@ param environmentName string
 param location string = resourceGroup().location
 
 @description('Secondary Azure region used for multi-region operations and failover.')
-param secondaryLocation string = 'francecentral'
+param secondaryLocation string = 'westeurope'
 
 @description('Object id of the signed-in user/service principal for local data-plane access.')
 param principalId string = ''
 
 @description('Native Foundry model router deployment name. Configuration-driven.')
 param modelRouterName string = 'model-router'
+
+@description('''
+Set true only when the SECONDARY region also offers the native Foundry model router.
+Most EU regions do not (only Sweden Central does today), so the router is deployed in the
+primary region only and the gpt-5 family is used for multi-region failover.
+''')
+param routerInSecondary bool = false
 
 @description('APIM publisher email (required by APIM).')
 param publisherEmail string = 'admin@contoso.com'
@@ -54,7 +61,7 @@ with a documented fallback (see docs/CONFIGURATION.md).
 param chatModelDeployments array = [
   {
     name: 'model-router'
-    model: { name: 'model-router', version: '2025-05-19' }
+    model: { name: 'model-router', version: '2025-11-18' }
     sku: { name: 'GlobalStandard', capacity: 50 }
   }
   {
@@ -65,11 +72,6 @@ param chatModelDeployments array = [
   {
     name: 'gpt-5'
     model: { name: 'gpt-5', version: '2025-08-07' }
-    sku: { name: 'GlobalStandard', capacity: 30 }
-  }
-  {
-    name: 'gpt-5-chat'
-    model: { name: 'gpt-5-chat', version: '2025-08-07' }
     sku: { name: 'GlobalStandard', capacity: 30 }
   }
   {
@@ -194,9 +196,13 @@ resource primaryChatDeployments 'Microsoft.CognitiveServices/accounts/deployment
   }
 ]
 
+// The secondary region may not offer the native model router; deploy only the models
+// it supports so failover works with the gpt-5 family.
+var secondaryChatModelDeployments = routerInSecondary ? chatModelDeployments : filter(chatModelDeployments, d => d.name != modelRouterName)
+
 @batchSize(1)
 resource secondaryChatDeployments 'Microsoft.CognitiveServices/accounts/deployments@2024-10-01' = [
-  for deployment in chatModelDeployments: {
+  for deployment in secondaryChatModelDeployments: {
     parent: foundrySecondary
     name: deployment.name
     sku: deployment.sku
@@ -214,7 +220,7 @@ resource secondaryChatDeployments 'Microsoft.CognitiveServices/accounts/deployme
 resource embeddingDeployment 'Microsoft.CognitiveServices/accounts/deployments@2024-10-01' = if (enableSemanticCache) {
   parent: foundryPrimary
   name: embeddingDeploymentName
-  sku: { name: 'Standard', capacity: 50 }
+  sku: { name: 'GlobalStandard', capacity: 50 }
   properties: {
     model: {
       format: 'OpenAI'
@@ -382,7 +388,7 @@ var apiPolicyXml = '''
     <base />
     <!-- Model abstraction: default to the native Foundry model router when the
          caller does not specify a deployment. Never hardcode model names here. -->
-    <set-variable name="deployment-id" value="@(context.Request.MatchedParameters.ContainsKey("deployment-id") ? context.Request.MatchedParameters["deployment-id"] : "${modelRouterName}")" />
+    <set-variable name="deployment-id" value="@(context.Request.MatchedParameters.ContainsKey("deployment-id") ? context.Request.MatchedParameters["deployment-id"] : "__MODEL_ROUTER__")" />
     <!-- Lightweight prompt-injection / jailbreak guardrail. Upgrade to the
          llm-content-safety policy (Azure AI Content Safety) for production. -->
     <set-variable name="promptText" value="@(context.Request.Body?.As<string>(preserveContent: true) ?? "")" />
@@ -396,25 +402,33 @@ var apiPolicyXml = '''
       </when>
     </choose>
     <!-- Token-level governance: per-subscription tokens-per-minute budget. -->
-    <azure-openai-token-limit counter-key="@(context.Subscription?.Id ?? "anonymous")" tokens-per-minute="${tokensPerMinute}" estimate-prompt-tokens="true" remaining-tokens-header-name="x-remaining-tokens" tokens-consumed-header-name="x-consumed-tokens" />
-    ${semanticCacheLookup}
+    <azure-openai-token-limit counter-key="@(context.Subscription?.Id ?? "anonymous")" tokens-per-minute="__TOKENS_PER_MINUTE__" estimate-prompt-tokens="true" remaining-tokens-header-name="x-remaining-tokens" tokens-consumed-header-name="x-consumed-tokens" />
+    __SEMANTIC_CACHE_LOOKUP__
     <!-- Managed-identity auth to Azure AI Foundry (no keys). -->
     <authentication-managed-identity resource="https://cognitiveservices.azure.com" output-token-variable-name="msi-access-token" ignore-error="false" />
     <set-header name="Authorization" exists-action="override">
       <value>@("Bearer " + (string)context.Variables["msi-access-token"])</value>
     </set-header>
     <set-query-parameter name="api-version" exists-action="override">
-      <value>${openAiApiVersion}</value>
+      <value>__OPENAI_API_VERSION__</value>
     </set-query-parameter>
     <!-- Multi-region routing: start on the primary region backend. -->
     <set-backend-service backend-id="foundry-primary" />
+    <!-- Observability: emit token metrics dimensioned by served model & region.
+         (emit-token-metric is only valid in the inbound section.) -->
+    <azure-openai-emit-token-metric namespace="ai-gateway">
+      <dimension name="Deployment" value="@((string)context.Variables["deployment-id"])" />
+      <dimension name="Backend" value="@(context.Request.Url.Host)" />
+      <dimension name="Subscription" value="@(context.Subscription?.Name ?? "unknown")" />
+    </azure-openai-emit-token-metric>
   </inbound>
   <backend>
-    <!-- Reliability & failover: retry on throttling/5xx and fail over to the
-         secondary region backend. -->
-    <retry condition="@(context.Response != null && (context.Response.StatusCode == 429 || context.Response.StatusCode >= 500))" count="2" interval="1" first-fast-retry="true">
+    <!-- Reliability & failover: retry on an unreachable primary (null response),
+         403 (region disabled / access blocked), throttling (429) or 5xx, and fail
+         over to the secondary region backend. -->
+    <retry condition="@(context.Response == null || context.Response.StatusCode == 403 || context.Response.StatusCode == 429 || context.Response.StatusCode >= 500)" count="2" interval="1" first-fast-retry="true">
       <choose>
-        <when condition="@(context.Response != null && (context.Response.StatusCode == 429 || context.Response.StatusCode >= 500))">
+        <when condition="@(context.Response == null || context.Response.StatusCode == 403 || context.Response.StatusCode == 429 || context.Response.StatusCode >= 500)">
           <set-backend-service backend-id="foundry-secondary" />
         </when>
       </choose>
@@ -423,13 +437,7 @@ var apiPolicyXml = '''
   </backend>
   <outbound>
     <base />
-    <!-- Observability: emit token metrics dimensioned by served model & region. -->
-    <azure-openai-emit-token-metric namespace="ai-gateway">
-      <dimension name="Deployment" value="@((string)context.Variables["deployment-id"])" />
-      <dimension name="Backend" value="@(context.Request.Url.Host)" />
-      <dimension name="Subscription" value="@(context.Subscription?.Name ?? "unknown")" />
-    </azure-openai-emit-token-metric>
-    ${semanticCacheStore}
+    __SEMANTIC_CACHE_STORE__
     <set-header name="x-served-backend" exists-action="override">
       <value>@(context.Request.Url.Host)</value>
     </set-header>
@@ -440,7 +448,7 @@ var apiPolicyXml = '''
 </policies>
 '''
 
-var apiPolicyResolved = replace(replace(replace(replace(replace(apiPolicyXml, '${modelRouterName}', modelRouterName), '${tokensPerMinute}', string(tokensPerMinute)), '${openAiApiVersion}', openAiApiVersion), '${semanticCacheLookup}', semanticCacheLookup), '${semanticCacheStore}', semanticCacheStore)
+var apiPolicyResolved = replace(replace(replace(replace(replace(apiPolicyXml, '__MODEL_ROUTER__', modelRouterName), '__TOKENS_PER_MINUTE__', string(tokensPerMinute)), '__OPENAI_API_VERSION__', openAiApiVersion), '__SEMANTIC_CACHE_LOOKUP__', semanticCacheLookup), '__SEMANTIC_CACHE_STORE__', semanticCacheStore)
 
 resource gatewayApiPolicy 'Microsoft.ApiManagement/service/apis/policies@2023-05-01-preview' = if (deployApim) {
   parent: gatewayApi
