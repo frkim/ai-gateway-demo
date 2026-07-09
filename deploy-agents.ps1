@@ -74,9 +74,12 @@ if ($LASTEXITCODE -ne 0) {
   az containerapp update -n $AppName -g $rg --image $image --set-env-vars @envArgs -o none
 }
 
-Write-Host "==> Granting the backend identity 'Azure AI Developer' on Foundry..." -ForegroundColor Cyan
+Write-Host "==> Granting the backend identity Foundry data-plane roles..." -ForegroundColor Cyan
 $mi = az containerapp show -n $AppName -g $rg --query "identity.principalId" -o tsv
 $acctId = az cognitiveservices account show --name $acct --resource-group $rg --query id -o tsv
+# Cognitive Services User = base data-plane access; Azure AI Developer = agent CRUD.
+az role assignment create --assignee-object-id $mi --assignee-principal-type ServicePrincipal `
+  --role "Cognitive Services User" --scope $acctId 2>$null | Out-Null
 az role assignment create --assignee-object-id $mi --assignee-principal-type ServicePrincipal `
   --role "64702f94-c441-49e6-a78b-ef80e0188fee" --scope $acctId 2>$null | Out-Null
 Write-Host "    Granted. (Data-plane RBAC can take a few minutes to take effect.)" -ForegroundColor DarkGray
