@@ -13,6 +13,10 @@ Env vars:
   MODEL_DEPLOYMENT_NAME   chat model deployment for the agents (e.g. gpt-5-mini)
   SEARCH_CONNECTION_NAME  Foundry project connection to Azure AI Search
   SEARCH_INDEX_NAME       Azure AI Search index (default: enterprise-kb)
+  APPLICATIONINSIGHTS_CONNECTION_STRING  Application Insights connection string;
+                          when set, agent runs are traced to App Insights via
+                          OpenTelemetry (falls back to the project's connected
+                          Application Insights resource if unset).
 """
 import os
 import logging
@@ -30,6 +34,7 @@ from azure.ai.projects.models import (
     AzureAISearchToolResource,
     AISearchIndexResource,
 )
+from azure.ai.projects.telemetry import AIProjectInstrumentor
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("agents-backend")
@@ -151,6 +156,42 @@ def openai_client():
     return _oai
 
 
+def _appinsights_connection_string() -> Optional[str]:
+    """Resolve the Application Insights connection string: prefer the env var, then
+    fall back to the Foundry project's connected Application Insights resource."""
+    cs = os.environ.get("APPLICATIONINSIGHTS_CONNECTION_STRING")
+    if cs:
+        return cs
+    try:
+        return project().telemetry.get_application_insights_connection_string()
+    except Exception as e:
+        log.warning("No Application Insights connection available: %s", e)
+        return None
+
+
+def setup_tracing(fastapi_app: FastAPI) -> bool:
+    """Wire agent + HTTP telemetry to Application Insights via OpenTelemetry."""
+    cs = _appinsights_connection_string()
+    if not cs:
+        log.info("Tracing disabled (no Application Insights connection string).")
+        return False
+    try:
+        from azure.monitor.opentelemetry import configure_azure_monitor
+        configure_azure_monitor(connection_string=cs)
+        # Trace Foundry agent runs (Responses API calls, tool use, tokens).
+        AIProjectInstrumentor().instrument(enable_content_recording=True)
+        try:
+            from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
+            FastAPIInstrumentor.instrument_app(fastapi_app)
+        except Exception as e:  # pragma: no cover
+            log.warning("FastAPI instrumentation skipped: %s", e)
+        log.info("Tracing to Application Insights enabled.")
+        return True
+    except Exception as e:
+        log.error("setup_tracing failed: %s", e)
+        return False
+
+
 def _search_connection_id() -> Optional[str]:
     try:
         conn = project().connections.get(name=SEARCH_CONNECTION_NAME)
@@ -259,6 +300,10 @@ class InvokeReq(BaseModel):
 
 @app.on_event("startup")
 def _startup():
+    try:
+        setup_tracing(app)
+    except Exception as e:
+        log.error("setup_tracing on startup failed: %s", e)
     try:
         ensure_agents()
     except Exception as e:

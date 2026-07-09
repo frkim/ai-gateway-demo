@@ -53,9 +53,9 @@ if ([string]::IsNullOrWhiteSpace($acr)) {
 }
 az acr update -n $acr --admin-enabled true -o none
 Write-Host "==> Building image with ACR cloud build ($acr)..." -ForegroundColor Cyan
-$image = "$acr.azurecr.io/agents-backend:v2"
-az acr build --registry $acr --image "agents-backend:v2" ./backend 2>&1 | Out-Null
-if ($LASTEXITCODE -ne 0 -and -not (az acr repository show-tags -n $acr --repository agents-backend --query "contains(@,'v2')" -o tsv 2>$null)) {
+$image = "$acr.azurecr.io/agents-backend:v3"
+az acr build --registry $acr --image "agents-backend:v3" ./backend 2>&1 | Out-Null
+if ($LASTEXITCODE -ne 0 -and -not (az acr repository show-tags -n $acr --repository agents-backend --query "contains(@,'v3')" -o tsv 2>$null)) {
   throw "ACR build failed."
 }
 
@@ -63,7 +63,11 @@ if ($LASTEXITCODE -ne 0 -and -not (az acr repository show-tags -n $acr --reposit
 Write-Host "==> Creating/updating the Container App '$AppName'..." -ForegroundColor Cyan
 $acrUser = az acr credential show -n $acr --query username -o tsv
 $acrPwd  = az acr credential show -n $acr --query "passwords[0].value" -o tsv
+$appInsightsCs = az monitor app-insights component show -g $rg --query "[0].connectionString" -o tsv 2>$null
 $envArgs = @("PROJECT_ENDPOINT=$ep", "MODEL_DEPLOYMENT_NAME=gpt-5-mini", "SEARCH_CONNECTION_NAME=$conn", "SEARCH_INDEX_NAME=enterprise-kb")
+if (-not [string]::IsNullOrWhiteSpace($appInsightsCs)) {
+  $envArgs += "APPLICATIONINSIGHTS_CONNECTION_STRING=$appInsightsCs"
+}
 az containerapp show -n $AppName -g $rg -o none 2>$null
 if ($LASTEXITCODE -ne 0) {
   az containerapp create -n $AppName -g $rg --environment $envName --image $image `
