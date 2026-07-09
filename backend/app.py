@@ -2,7 +2,9 @@
 AI Gateway demo — Foundry multi-agent backend.
 
 Exposes a tiny HTTP API the browser demo calls to run 5 multi-agent use cases
-against REAL Azure AI Foundry Agent Service agents. Authenticates to the Foundry
+against REAL Azure AI Foundry agents built on the new prompt-agent model. Agents
+are created with `agents.create_version(PromptAgentDefinition(...))` and invoked
+through the Responses API via `agent_reference`. Authenticates to the Foundry
 project with a managed identity (DefaultAzureCredential). One agent uses the
 Azure AI Search ("Foundry IQ") tool grounded on the enterprise-kb index.
 
@@ -22,17 +24,21 @@ from pydantic import BaseModel
 
 from azure.identity import DefaultAzureCredential
 from azure.ai.projects import AIProjectClient
-from azure.ai.agents.models import AzureAISearchTool, ListSortOrder
+from azure.ai.projects.models import (
+    PromptAgentDefinition,
+    AzureAISearchTool,
+    AzureAISearchToolResource,
+    AISearchIndexResource,
+)
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("agents-backend")
 
 PROJECT_ENDPOINT = os.environ["PROJECT_ENDPOINT"]
-# The Foundry Assistants runtime is used for all agents; gpt-4.1-mini is reliable
-# there (gpt-5 reasoning models don't return assistant text consistently and can't
-# use the classic azure_ai_search tool).
-MODEL = os.environ.get("MODEL_DEPLOYMENT_NAME", "gpt-4.1-mini")
-SEARCH_MODEL = os.environ.get("SEARCH_MODEL_DEPLOYMENT_NAME", "gpt-4.1-mini")
+# The new prompt-agent model invokes agents through the Responses API, which the
+# gpt-5 reasoning family supports together with the Azure AI Search tool — so all
+# agents run on gpt-5-mini.
+MODEL = os.environ.get("MODEL_DEPLOYMENT_NAME", "gpt-5-mini")
 SEARCH_CONNECTION_NAME = os.environ.get("SEARCH_CONNECTION_NAME", "enterprise-search")
 SEARCH_INDEX = os.environ.get("SEARCH_INDEX_NAME", "enterprise-kb")
 
@@ -127,7 +133,8 @@ app.add_middleware(
 )
 
 _project: Optional[AIProjectClient] = None
-_agent_ids: dict = {}
+_oai = None
+_agents: set = set()
 
 
 def project() -> AIProjectClient:
@@ -135,6 +142,13 @@ def project() -> AIProjectClient:
     if _project is None:
         _project = AIProjectClient(endpoint=PROJECT_ENDPOINT, credential=DefaultAzureCredential())
     return _project
+
+
+def openai_client():
+    global _oai
+    if _oai is None:
+        _oai = project().get_openai_client()
+    return _oai
 
 
 def _search_connection_id() -> Optional[str]:
@@ -152,80 +166,90 @@ def _search_connection_id() -> Optional[str]:
     return None
 
 
-def ensure_agents() -> dict:
-    """Create the 5 agents if they don't already exist (idempotent by name)."""
+def ensure_agents() -> list:
+    """Create the 5 prompt agents if they don't already exist (idempotent by name)."""
     agents = project().agents
-    existing = {}
+    existing = set()
     try:
-        for a in agents.list_agents():
-            existing[a.name] = a.id
+        for a in agents.list():
+            n = getattr(a, "name", None)
+            if n:
+                existing.add(n)
     except Exception as e:
-        log.warning("list_agents failed: %s", e)
+        log.warning("agents.list failed: %s", e)
 
     search_conn_id = _search_connection_id()
     for name, spec in AGENT_DEFS.items():
         if name in existing:
-            _agent_ids[name] = existing[name]
+            _agents.add(name)
             continue
         tools = None
-        tool_resources = None
         if spec["search"] and search_conn_id:
-            ai_search = AzureAISearchTool(index_connection_id=search_conn_id, index_name=SEARCH_INDEX)
-            tools = ai_search.definitions
-            tool_resources = ai_search.resources
+            tools = [
+                AzureAISearchTool(
+                    azure_ai_search=AzureAISearchToolResource(
+                        indexes=[
+                            AISearchIndexResource(
+                                project_connection_id=search_conn_id,
+                                index_name=SEARCH_INDEX,
+                                query_type="simple",
+                                top_k=5,
+                            )
+                        ]
+                    )
+                )
+            ]
         try:
-            model = SEARCH_MODEL if spec["search"] else MODEL
-            kwargs = dict(model=model, name=name, instructions=spec["instructions"])
-            if tools:
-                kwargs["tools"] = tools
-                kwargs["tool_resources"] = tool_resources
-            agent = agents.create_agent(**kwargs)
-            _agent_ids[name] = agent.id
-            log.info("created agent %s -> %s", name, agent.id)
+            agents.create_version(
+                agent_name=name,
+                definition=PromptAgentDefinition(
+                    model=MODEL, instructions=spec["instructions"], tools=tools
+                ),
+            )
+            _agents.add(name)
+            log.info("created prompt agent %s", name)
         except Exception as e:
-            log.error("create_agent %s failed: %s", name, e)
-    return _agent_ids
+            log.error("create_version %s failed: %s", name, e)
+    return sorted(_agents)
 
 
 def run_agent(name: str, prompt: str):
-    """Run one agent on a prompt; return (text, citations)."""
-    agents = project().agents
-    agent_id = _agent_ids.get(name)
-    if not agent_id:
+    """Run one prompt agent via the Responses API; return (text, citations)."""
+    if name not in _agents:
         ensure_agents()
-        agent_id = _agent_ids.get(name)
-    if not agent_id:
+    if name not in _agents:
         return (f"[agent '{name}' unavailable]", [])
 
-    thread = agents.threads.create()
-    agents.messages.create(thread_id=thread.id, role="user", content=prompt)
-    run = agents.runs.create_and_process(thread_id=thread.id, agent_id=agent_id)
-    if run.status == "failed":
-        return (f"[run failed: {getattr(run, 'last_error', '')}]", [])
-
-    text = ""
-    citations = []
-    for msg in agents.messages.list(thread_id=thread.id, order=ListSortOrder.ASCENDING):
-        if msg.role != "assistant":
-            continue
-        for part in (msg.content or []):
-            t = getattr(part, "text", None)
-            if not t:
-                continue
-            text = t.value if hasattr(t, "value") else str(t)
-            for ann in (getattr(t, "annotations", None) or []):
-                uc = getattr(ann, "url_citation", None)
-                if uc:
-                    citations.append({"title": getattr(uc, "title", ""), "url": getattr(uc, "url", "")})
-                else:
-                    title = getattr(getattr(ann, "file_citation", None), "file_id", "") or getattr(ann, "text", "")
-                    if title:
-                        citations.append({"title": str(title), "url": ""})
     try:
-        agents.threads.delete(thread.id)
+        resp = openai_client().responses.create(
+            model=MODEL,
+            input=prompt,
+            extra_body={"agent_reference": {"type": "agent_reference", "name": name}},
+        )
+    except Exception as e:
+        return (f"[run failed: {e}]", [])
+
+    text = getattr(resp, "output_text", "") or ""
+    citations = []
+    try:
+        for item in (getattr(resp, "output", None) or []):
+            for part in (getattr(item, "content", None) or []):
+                for ann in (getattr(part, "annotations", None) or []):
+                    title = getattr(ann, "title", None) or getattr(ann, "filename", None) or ""
+                    url = getattr(ann, "url", "") or ""
+                    if title or url:
+                        citations.append({"title": str(title), "url": url})
     except Exception:
         pass
-    return (text, citations)
+    # de-duplicate citations preserving order
+    seen, uniq = set(), []
+    for c in citations:
+        k = (c["title"], c["url"])
+        if k in seen:
+            continue
+        seen.add(k)
+        uniq.append(c)
+    return (text, uniq)
 
 
 class InvokeReq(BaseModel):
@@ -243,7 +267,7 @@ def _startup():
 
 @app.get("/health")
 def health():
-    return {"ok": True, "agents": list(_agent_ids.keys())}
+    return {"ok": True, "agents": sorted(_agents)}
 
 
 @app.get("/api/usecases")

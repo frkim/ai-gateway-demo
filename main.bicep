@@ -271,10 +271,10 @@ resource embeddingDeployment 'Microsoft.CognitiveServices/accounts/deployments@2
   ]
 }
 
-// Agent model (primary): the Foundry Agent Service "Foundry IQ" agents use the
-// classic Assistants runtime + Azure AI Search tool, which needs a gpt-4o-class
-// model (gpt-5 reasoning models are Responses-API only). gpt-4.1-mini is used by
-// the multi-agent backend for all 5 agents.
+// Agent model (primary): the Foundry multi-agent backend uses the new prompt-agent
+// model, which invokes agents through the Responses API. gpt-5-mini (deployed above)
+// serves all 5 agents including the Azure AI Search ("Foundry IQ") tool. This
+// gpt-4.1-mini deployment is retained as an optional non-reasoning fallback.
 resource agentModelDeployment 'Microsoft.CognitiveServices/accounts/deployments@2024-10-01' = {
   parent: foundryPrimary
   name: agentModelName

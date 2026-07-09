@@ -1,5 +1,5 @@
 fastapi==0.115.6
 uvicorn[standard]==0.34.0
 azure-identity==1.19.0
-azure-ai-projects==1.0.0
-azure-ai-agents==1.0.0
+azure-ai-projects==2.3.0
+openai==2.44.0
