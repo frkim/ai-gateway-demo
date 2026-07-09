@@ -119,6 +119,7 @@
       const [searchEndpoint, setSearchEndpoint] = useState(ls('searchEndpoint', ''));
       const [searchIndex, setSearchIndex] = useState(ls('searchIndex', ''));
       const [searchKey, setSearchKey] = useState(ls('searchKey', ''));
+      const [backendUrl, setBackendUrl] = useState(ls('backendUrl', ''));
       const [tab, setTab] = useState('chat');
       const [conn, setConn] = useState(null); // null | 'ok' | 'bad'
       const [loadedLocal, setLoadedLocal] = useState(false);
@@ -133,7 +134,8 @@
         localStorage.setItem('ver', apiVersion); localStorage.setItem('deps', deployments);
         localStorage.setItem('searchEndpoint', searchEndpoint); localStorage.setItem('searchIndex', searchIndex);
         localStorage.setItem('searchKey', searchKey);
-      }, [gatewayUrl, apiKey, apiVersion, deployments, searchEndpoint, searchIndex, searchKey]);
+        localStorage.setItem('backendUrl', backendUrl);
+      }, [gatewayUrl, apiKey, apiVersion, deployments, searchEndpoint, searchIndex, searchKey, backendUrl]);
 
       // When served locally, auto-populate connection settings from an (untracked)
       // config.json sitting next to this file. Existing values are never overwritten.
@@ -149,6 +151,7 @@
             if (cfg.searchEndpoint) setSearchEndpoint(v => v || cfg.searchEndpoint);
             if (cfg.searchIndex) setSearchIndex(v => v || cfg.searchIndex);
             if (cfg.searchKey) setSearchKey(v => v || cfg.searchKey);
+            if (cfg.backendUrl) setBackendUrl(v => v || cfg.backendUrl);
             setLoadedLocal(true);
           })
           .catch(() => {});
@@ -256,7 +259,7 @@
           </div>
 
           <div className="tabs">
-            {[['chat','Chat playground'],['demos','Feature demos'],['log','Activity log']].map(([id,label]) =>
+            {[['chat','Chat playground'],['demos','Feature demos'],['agents','Multi-agent (Foundry)'],['log','Activity log']].map(([id,label]) =>
               <div key={id} className={`tab ${tab===id?'active':''}`} onClick={() => setTab(id)}>{label}</div>)}
           </div>
 
@@ -264,6 +267,7 @@
 
           {tab === 'chat'  && <Chat call={callGateway} deploymentList={deploymentList} router={router} disabled={!configured} ragReady={!!(searchEndpoint && searchIndex && searchKey)} />}
           {tab === 'demos' && <Demos call={callGateway} router={router} concrete={concrete} disabled={!configured} />}
+          {tab === 'agents' && <Agents backendUrl={backendUrl} />}
           {tab === 'log'   && <LogView log={log} onClear={() => setLog([])} />}
 
           <p className="small muted" style={{ textAlign: 'center', marginTop: 20 }}>
@@ -562,6 +566,95 @@
           <h3><span className="num">8</span> Observability</h3>
           <p className="desc">Every call emits token metrics to Application Insights (namespace <code>ai-gateway</code>, dimensions Deployment / Backend / Subscription),
             plus request latency and failover events. Open Application Insights for the resource group to explore dashboards, or use the Activity log tab here for live headers.</p>
+        </div>
+      );
+    }
+
+    // ---- Multi-agent (Foundry Agent Service) --------------------------------
+    function Agents({ backendUrl }) {
+      const [usecases, setUsecases] = useState([]);
+      const [uc, setUc] = useState('');
+      const [input, setInput] = useState('');
+      const [busy, setBusy] = useState(false);
+      const [res, setRes] = useState(null);
+      const [err, setErr] = useState('');
+      const base = (backendUrl || '').replace(/\/$/, '');
+
+      useEffect(() => {
+        if (!base) return;
+        fetch(base + '/api/usecases').then(r => r.json()).then(d => {
+          setUsecases(d.usecases || []);
+          if (d.usecases && d.usecases[0]) { setUc(d.usecases[0].id); setInput(d.usecases[0].sample || ''); }
+        }).catch(e => setErr('Could not reach the agent backend: ' + String(e)));
+      }, [base]);
+
+      const current = usecases.find(u => u.id === uc);
+
+      async function run() {
+        if (!base || !uc || busy) return;
+        setBusy(true); setRes(null); setErr('');
+        try {
+          const r = await fetch(base + '/api/invoke', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ usecase: uc, input })
+          });
+          const d = await r.json();
+          if (d.error) setErr(d.error); else setRes(d);
+        } catch (e) { setErr('Request failed: ' + String(e)); }
+        setBusy(false);
+      }
+
+      if (!base) {
+        return (
+          <div className="card">
+            <h2>Multi-agent (Foundry Agent Service)</h2>
+            <p className="desc">This tab runs real <b>Azure AI Foundry agents</b> (Router / Retriever / Writer / Reviewer, one grounded on Azure AI Search via the <b>Foundry IQ</b> tool) through a managed-identity backend.</p>
+            <p className="small muted">Backend not configured. Deploy it with <span className="kbd">./deploy-agents.ps1</span>, then run <span className="kbd">./serve-local.ps1</span> and reload — <code>backendUrl</code> is written into the local config.</p>
+          </div>
+        );
+      }
+
+      return (
+        <div className="card">
+          <h2>Multi-agent use cases <span className="muted small">· real Foundry agents</span></h2>
+          <p className="desc">Each use case orchestrates one or more real <b>Foundry Agent Service</b> agents. The knowledge agent is grounded on Azure AI Search (<b>Foundry IQ</b>, index <code>enterprise-kb</code>); all agents authenticate with managed identity.</p>
+          <label className="field" style={{ display: 'block' }}>Use case
+            <select value={uc} onChange={e => { setUc(e.target.value); const c = usecases.find(u => u.id === e.target.value); if (c) setInput(c.sample || ''); }}
+                    style={{ width: '100%', marginTop: 5 }}>
+              {usecases.map(u => <option key={u.id} value={u.id}>{u.title}</option>)}
+            </select>
+          </label>
+          {current && <p className="small muted" style={{ marginTop: 6 }}>{current.desc} <span style={{ opacity: .8 }}>· agents: {current.agents.join(' → ')}</span></p>}
+          <label className="field" style={{ display: 'block', marginTop: 10 }}>Input
+            <textarea rows="3" value={input} onChange={e => setInput(e.target.value)} style={{ width: '100%', marginTop: 5, resize: 'vertical' }} />
+          </label>
+          <div className="chat-controls">
+            <button disabled={busy} onClick={run}>{busy ? <span className="spin"></span> : 'Run agents'}</button>
+          </div>
+          {err && <div className="result" style={{ color: 'var(--bad)' }}>{err}</div>}
+          {res && (
+            <div style={{ marginTop: 14 }}>
+              <div className="msg assistant">
+                <div className="who">final answer</div>
+                <div style={{ whiteSpace: 'pre-wrap' }}>{res.answer}</div>
+                {(res.citations || []).length > 0 && (
+                  <div className="citations">
+                    <div className="who">sources (Foundry IQ)</div>
+                    <ol>{res.citations.map((c, i) => <li key={i}><b>{c.title || c.url || ('source ' + (i + 1))}</b></li>)}</ol>
+                  </div>
+                )}
+              </div>
+              <details style={{ marginTop: 10 }}>
+                <summary className="small muted" style={{ cursor: 'pointer' }}>Agent pipeline ({res.steps.length} step{res.steps.length === 1 ? '' : 's'})</summary>
+                {res.steps.map((s, i) => (
+                  <div key={i} className="msg" style={{ marginTop: 8 }}>
+                    <div className="who"><span className="badge model">{s.agent}</span></div>
+                    <div style={{ whiteSpace: 'pre-wrap' }}>{s.output}</div>
+                  </div>
+                ))}
+              </details>
+            </div>
+          )}
         </div>
       );
     }

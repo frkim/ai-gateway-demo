@@ -7,6 +7,8 @@
 config.json
 _conn.json
 main.json
+backend/.venv/
+backend/__pycache__/
 
 # User-specific files
 *.rsuser

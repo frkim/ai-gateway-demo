@@ -44,6 +44,10 @@ param deployApim bool = true
 param enableSemanticCache bool = true
 @description('Deploy Azure Managed Grafana with an AI Gateway dashboard (Standard SKU).')
 param deployGrafana bool = true
+@description('Model deployment used by the Foundry multi-agent backend (Assistants + AI Search tool).')
+param agentModelName string = 'gpt-4.1-mini'
+@description('Version for the agent model deployment.')
+param agentModelVersion string = '2025-04-14'
 @description('Embedding model deployment used by the semantic cache lookup policy.')
 param embeddingDeploymentName string = 'text-embedding-3-small'
 
@@ -267,6 +271,26 @@ resource embeddingDeployment 'Microsoft.CognitiveServices/accounts/deployments@2
   ]
 }
 
+// Agent model (primary): the Foundry Agent Service "Foundry IQ" agents use the
+// classic Assistants runtime + Azure AI Search tool, which needs a gpt-4o-class
+// model (gpt-5 reasoning models are Responses-API only). gpt-4.1-mini is used by
+// the multi-agent backend for all 5 agents.
+resource agentModelDeployment 'Microsoft.CognitiveServices/accounts/deployments@2024-10-01' = {
+  parent: foundryPrimary
+  name: agentModelName
+  sku: { name: 'Standard', capacity: 50 }
+  properties: {
+    model: {
+      format: 'OpenAI'
+      name: agentModelName
+      version: agentModelVersion
+    }
+  }
+  dependsOn: [
+    embeddingDeployment
+  ]
+}
+
 // -----------------------------------------------------------------------------
 // Azure AI Search — enterprise knowledge grounding (RAG)
 // -----------------------------------------------------------------------------
@@ -290,6 +314,24 @@ resource search 'Microsoft.Search/searchServices@2024-06-01-preview' = {
 }
 
 var searchIndexName = 'enterprise-kb'
+
+// Foundry project connection to Azure AI Search (AAD) — enables the agent's
+// Azure AI Search ("Foundry IQ") tool to ground on the enterprise-kb index.
+resource searchConnection 'Microsoft.CognitiveServices/accounts/projects/connections@2025-06-01' = {
+  parent: foundryPrimaryProject
+  name: 'enterprise-search'
+  properties: {
+    category: 'CognitiveSearch'
+    target: 'https://${search.name}.search.windows.net'
+    authType: 'AAD'
+    isSharedToAll: true
+    metadata: {
+      ApiType: 'Azure'
+      ResourceId: search.id
+      location: location
+    }
+  }
+}
 
 // -----------------------------------------------------------------------------
 // Gateway caching note: this demo uses APIM's built-in cache (cache-store /
@@ -709,6 +751,40 @@ resource appToSearchContributor 'Microsoft.Authorization/roleAssignments@2022-04
   }
 }
 
+// Foundry account -> Search data reader: the agent's Azure AI Search tool grounds
+// on the enterprise-kb index using the project's managed identity (AAD connection).
+resource foundryPrimaryToSearch 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(search.id, foundryPrimary.id, roleSearchIndexDataReader)
+  scope: search
+  properties: {
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', roleSearchIndexDataReader)
+    principalId: foundryPrimary.identity.principalId
+    principalType: 'ServicePrincipal'
+  }
+}
+
+// Foundry PROJECT identity -> Search reader + service contributor. The agent's
+// Azure AI Search tool authenticates as the project managed identity.
+resource projectToSearchReader 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(search.id, foundryPrimaryProject.id, roleSearchIndexDataReader)
+  scope: search
+  properties: {
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', roleSearchIndexDataReader)
+    principalId: foundryPrimaryProject.identity.principalId
+    principalType: 'ServicePrincipal'
+  }
+}
+
+resource projectToSearchContributor 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(search.id, foundryPrimaryProject.id, roleSearchServiceContributor)
+  scope: search
+  properties: {
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', roleSearchServiceContributor)
+    principalId: foundryPrimaryProject.identity.principalId
+    principalType: 'ServicePrincipal'
+  }
+}
+
 // App identity -> Key Vault secrets user
 resource appToKeyVault 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
   name: guid(keyVault.id, appIdentity.id, roleKeyVaultSecretsUser)
@@ -775,3 +851,6 @@ output GOVERNANCE_WORKBOOK_ID string = governanceWorkbook.id
 output LOG_ANALYTICS_WORKSPACE_ID string = logAnalytics.id
 output GRAFANA_NAME string = deployGrafana ? grafana.name : ''
 output GRAFANA_ENDPOINT string = deployGrafana ? grafana.properties.endpoint : ''
+output FOUNDRY_PROJECT_ENDPOINT string = '${foundryPrimary.properties.endpoint}api/projects/${foundryPrimaryProject.name}'
+output FOUNDRY_PROJECT_ENDPOINT_AIS string = 'https://${foundryPrimary.name}.services.ai.azure.com/api/projects/${foundryPrimaryProject.name}'
+output SEARCH_CONNECTION_NAME string = searchConnection.name
