@@ -658,8 +658,9 @@ resource governanceWorkbook 'Microsoft.Insights/workbooks@2023-06-01' = {
 
 // -----------------------------------------------------------------------------
 // Azure Managed Grafana — AI Gateway usage dashboards (Azure Monitor data source
-// is auto-provisioned; its managed identity is granted read access below, and
-// the dashboard JSON is imported by deploy-grafana.ps1 after provisioning).
+// is auto-provisioned; its managed identity is granted read access below). Import
+// the dashboard JSON from grafana/ after provisioning via the Grafana UI or the
+// `az grafana dashboard create` CLI.
 // -----------------------------------------------------------------------------
 resource grafana 'Microsoft.Dashboard/grafana@2023-09-01' = if (deployGrafana) {
   name: 'amg-${resourceToken}'

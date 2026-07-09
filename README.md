@@ -59,23 +59,6 @@ You also need **Cognitive Services / Azure OpenAI quota** for the `gpt-5` family
 
 ## Quick start
 
-### Option A — one-command script
-
-```powershell
-# Windows / PowerShell
-./deploy.ps1
-```
-
-```bash
-# macOS / Linux
-./deploy.sh
-```
-
-The script logs in with `azd`, creates the `ai-gateway-demo` environment, provisions
-everything, then prints the gateway URL and APIM subscription key.
-
-### Option B — azd directly
-
 ```bash
 azd auth login
 azd env new ai-gateway-demo
@@ -115,12 +98,16 @@ scenario with `--only <name>`. See [samples/README.md](samples/README.md).
 ### Browser client
 
 Open [webapp.html](webapp.html) (a single-file React app — no build step) and paste the
-gateway URL and subscription key. It has three tabs:
+gateway URL and subscription key. It has four tabs:
 
 - **Chat playground** — pick any deployment or the native router, toggle RAG, and see the
   served model, `x-cache`, `x-served-backend`, token and latency badges per message.
 - **Feature demos** — one-click cards for model abstraction, native routing, guardrails
   (`400`), caching (`MISS`→`HIT`), token governance (`429`), and multi-region failover.
+- **Multi-agent (Foundry)** — a combo box of five multi-agent use cases (knowledge
+  concierge, policy compare, triage & route, draft & review, research brief) served by
+  real Foundry **prompt agents** (gpt-5-mini + Azure AI Search grounding), with the agent
+  pipeline and citations shown per run. Requires the agents backend (see below).
 - **Activity log** — a live table of every request with status, cache, backend, remaining
   tokens and latency.
 
@@ -192,12 +179,17 @@ python samples/demo.py --from-azd --only failover   # backend flips to secondary
 | `main.bicep` | Self-contained, resourceGroup-scoped infrastructure |
 | `main.parameters.json` | azd → Bicep parameter bindings |
 | `azure.yaml` | azd project definition (infra-only) |
-| `deploy.ps1` / `deploy.sh` | One-command provisioning wrappers |
 | `samples/demo.py` | Python feature demo (stdlib only) |
 | `samples/README.md` | Python demo guide |
-| `webapp.html` | Single-file React demo dashboard (Chat · Feature demos · Activity log) |
+| `webapp.html` | Single-file React demo dashboard (Chat · Feature demos · Multi-agent · Activity log) |
 | `requests.http` | REST Client sample requests |
+| `backend/` | FastAPI multi-agent backend (Foundry prompt agents + App Insights tracing) |
+| `deploy-agents.ps1` | Builds + deploys the agents backend to Azure Container Apps |
+| `ingest-kb.ps1` | Uploads the sample KB into Azure AI Search |
+| `serve-local.ps1` | Serves `webapp.html` locally with pre-filled settings |
 | `failover-demo.sh` | Simulates a primary-region outage (backend swap) |
+| `grafana/` | Managed Grafana AI-gateway dashboard JSON |
+| `workbook.json` | Azure Monitor governance workbook |
 | `enterprise-kb.sample.md` | Sample RAG knowledge base |
 | `.github/workflows/azure-dev.yml` | CI/CD pipeline (azd provision, default Sweden Central) |
 | `ARCHITECTURE.md` | Architecture, diagrams & design |
